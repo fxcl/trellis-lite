@@ -12,7 +12,7 @@ Trellis Lite 保留核心价值，砍掉所有非必要复杂度：
 |---|---|
 | 20+ Python 脚本 | **1 个**单文件脚本（~835 行） |
 | 4 阶段工作流 | **3 阶段**（PLAN → CODE → WRAP） |
-| 20+ 平台适配 | **5 个**（Qoder、Claude Code、OpenCode、Cline + AGENTS.md 通用） |
+| 20+ 平台适配 | **4 个**（Qoder、Claude Code、OpenCode、Cline）+ AGENTS.md 通用入口 |
 | Channel 多 agent 协作 | 移除 |
 | Memory 系统（SQLite） | 移除 |
 | JSONL 上下文清单 | 移除（AI 直接读 PRD + spec） |

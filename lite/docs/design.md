@@ -4,25 +4,25 @@
 
 ### 核心问题
 
-原版 Trellis 为**多平台、多 agent 协作**的团队场景设计，功能强大但复杂度高：20+ Python 脚本、4 阶段工作流、20+ 平台适配层、Channel 协作、SQLite Memory、JSONL 上下文清单。对于**个人开发者 + Qoder 单平台**来说，大部分是死重。
+原版 Trellis 为**多平台、多 agent 协作**的团队场景设计，功能强大但复杂度高：28 个 Python 脚本、4 阶段工作流、20+ 平台适配层、Channel 事件溯源协作、跨会话 Memory 检索、JSONL 上下文清单。对于**个人开发者 + Qoder 单平台**来说，大部分是死重。
 
 ### 五条设计原则
 
 | 原则 | 原版做法 | Lite 做法 | 动机 |
 |---|---|---|---|
-| **一个脚本搞定一切** | 20+ 文件分散在 `scripts/`, `paths.py`, `task_store.py`... | 单文件 `trellis.py`（~835 行） | 降低安装、维护、理解成本 |
-| **零外部依赖** | pnpm workspace + SQLite + 多平台运行时 | 纯 Python 3.9+ 标准库 | 个人开发者不想装一堆依赖 |
-| **文件即数据库** | SQLite 存储 tasks/memory + JSONL 上下文清单 | JSON 存任务，Markdown 存日志 | 去掉中间层，AI 直接消费 |
-| **AI 直接消费** | AI 读 JSONL 上下文清单（由 `get_context.py` 生成） | AI 直接读 PRD + spec 文件 | 去掉中间格式，减少信息损耗 |
-| **保留 Sub-agent** | Channel 多 agent 协作 | Qoder 原生 `GeneralPurpose` / `CodeReview` | 大任务仍可并行分发 |
+| **一个脚本搞定一切** | 28 个 Python 脚本分散在 `scripts/`, `task_store.py`, `task_context.py`... | 单文件 `trellis.py`（~835 行） | 降低安装、维护、理解成本 |
+| **零外部依赖** | pnpm workspace + Node CLI + 多平台运行时 | 纯 Python 3.9+ 标准库 | 个人开发者不想装一堆依赖 |
+| **文件即数据库** | JSON 存任务 + JSONL 上下文清单 | JSON 存任务，Markdown 存日志 | 去掉中间层，AI 直接消费 |
+| **AI 直接消费** | AI 读 JSONL 上下文清单（`implement.jsonl`/`check.jsonl`，按任务圈定 spec/research 文件） | AI 直接读 PRD + spec 文件 | 去掉中间格式，减少信息损耗（代价：丢失按任务精准注入） |
+| **保留 Sub-agent** | Channel 事件溯源协作 + implement/check sub-agent | Qoder 原生 `GeneralPurpose` / `CodeReview` | 大任务仍可并行分发 |
 
 ### 核心取舍
 
 ```
  砍掉                          保留
  ─────────────────────────────────────────────
- Channel 多 agent 协作          Sub-agent 分发（Qoder 原生）
- Memory 系统（SQLite）          文件型会话日志（Markdown）
+ Channel 事件溯源协作            Sub-agent 分发（Qoder 原生）
+ Memory 跨会话检索              文件型会话日志（Markdown）
  JSONL 上下文清单               AI 直接读 markdown
  4 阶段工作流                   3 阶段（PLAN→CODE→WRAP）
  20+ 平台适配                   仅 AGENTS.md
@@ -131,6 +131,8 @@ planning ──(task start)──→ in_progress ──(task finish)──→ do
 planning / in_progress ──(task cancel)──→ cancelled（目录保留，不归档）
 ```
 
+> **与原版的状态术语差异**：原版 Trellis 任务状态为 `planning → completed`（归档时置 `completed`），lite 细化为 `planning / in_progress / done / archived / cancelled` 五态。这是有意为之 — 为单人工作流提供更细的进度可见性（`task list` 可区分进行中/已完成/已放弃）。若未来迁移回原版，需做状态字段映射。
+
 **关键设计决策**：
 
 - **文件指针而非状态管理器**：`.current-task` 只存一行文本（相对路径），没有锁、没有 session、没有并发控制 — 因为面向个人开发者，一个人不会同时操作两个任务。
@@ -166,7 +168,7 @@ AI 在 Phase 2（CODE）开始前**必须读取相关 spec**，这不是建议�
 用 JWT 实现了登录接口，spec 中新增了 token 过期策略规则。
 ```
 
-**为什么不做 Memory 系统**：个人开发者不需要跨任务的语义搜索。一个按时间排列的 Markdown 日志就够了，还能直接 `git diff` 查看历史。
+**为什么不做 Memory 系统**：原版 Memory（`packages/core/src/mem/`）是**跨会话检索 + 对话上下文提取**（`searchMemSessions`/`extractMemDialogue`），基于持久化的 Claude/Codex/OpenCode 会话做语义搜索。个人开发者通常不需要这种跨任务的语义检索 — 一个按时间排列的 Markdown 日志就够了，还能直接 `git diff` 查看历史。这是**能力降级**（丢失语义检索），但对单人场景收益低、成本高，取舍合理。
 
 ### 3.5 Sub-agent 分发
 

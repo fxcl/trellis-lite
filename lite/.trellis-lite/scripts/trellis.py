@@ -159,7 +159,7 @@ def git_log_oneline(n: int = 5) -> str:
     try:
         import subprocess
         result = subprocess.run(
-            ["git", "log", f"--oneline", f"-{n}"],
+            ["git", "log", "--oneline", f"-{n}"],
             capture_output=True, text=True, timeout=10,
         )
         return result.stdout.strip()
@@ -209,13 +209,22 @@ def resolve_task_dir(task_input: str) -> Path | None:
     if "/" in task_input or "\\" in task_input or ".." in task_input:
         print(colored(f"Invalid task name: {task_input}", C_RED))
         return None
+    # Reject the archive container itself (bare name, case-insensitive)
+    if task_input.lower() == DIR_ARCHIVE:
+        print(colored(f"Invalid task name: {task_input}", C_RED))
+        return None
     tasks_dir = get_tasks_dir()
     # Try direct: tasks/<input>
     candidate = tasks_dir / task_input
     if candidate.is_dir():
         return candidate
     # Try with date prefix: tasks/MM-DD-<input>
-    matches = list(tasks_dir.glob(f"*-{task_input}"))
+    # Literal endswith match (no glob semantics) so user input is matched exactly
+    matches = []
+    for t in tasks_dir.iterdir():
+        if t.is_dir() and t.name.endswith(f"-{task_input}"):
+            matches.append(t)
+    matches.sort()
     if len(matches) == 1:
         return matches[0]
     if len(matches) > 1:
@@ -287,7 +296,7 @@ def cmd_init(args: list[str]) -> int:
 
 def cmd_task(args: list[str]) -> int:
     if not args:
-        print(colored("Usage: trellis.py task <create|start|current|finish|archive|list>", C_RED))
+        print(colored("Usage: trellis.py task <create|start|current|finish|archive|cancel|list>", C_RED))
         return 1
 
     sub = args[0]
@@ -307,6 +316,7 @@ def cmd_task(args: list[str]) -> int:
         return _task_cancel(rest)
     elif sub == "list":
         return _task_list(rest)
+    else:
         print(colored(f"Unknown task subcommand: {sub}", C_RED))
         return 1
 
@@ -328,7 +338,11 @@ def _task_create(args: list[str]) -> int:
             title_parts.append(args[i])
             i += 1
 
-    title = " ".join(title_parts).strip('"\'')
+    raw_title = " ".join(title_parts)
+    # Strip a single pair of matching surrounding quotes ("" or ''), not each end independently
+    title = raw_title
+    if len(title) >= 2 and title[0] == title[-1] and title[0] in "\"'":
+        title = title[1:-1]
     if not title:
         print(colored("Error: title cannot be empty", C_RED))
         return 1
@@ -375,6 +389,11 @@ def _task_create(args: list[str]) -> int:
 <!-- Any constraints, context, or references -->
 """
     (task_dir / "prd.md").write_text(prd_content, encoding="utf-8")
+
+    # Warn if another task is already active (one task at a time)
+    existing = get_current_task()
+    if existing:
+        print(colored(f"Warning: '{existing}' is still the current task — one task at a time", C_YELLOW))
 
     # Auto-set as current task
     rel = f"{TRELLIS_DIR}/{DIR_TASKS}/{dir_name}"

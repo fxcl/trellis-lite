@@ -33,7 +33,7 @@ NC='\033[0m'
 
 # --- Parse args ---
 
-TARGET_DIR="."
+TARGET_DIR=""
 DEV_NAME="$(whoami)"
 PLATFORMS="all"
 
@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         *)
-            if [ "$TARGET_DIR" = "." ]; then
+            if [ -z "$TARGET_DIR" ]; then
                 TARGET_DIR="$1"
             elif [ "$DEV_NAME" = "$(whoami)" ]; then
                 DEV_NAME="$1"
@@ -58,8 +58,20 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Default target to current directory if not provided
+if [ -z "$TARGET_DIR" ]; then
+    TARGET_DIR="."
+fi
+
 echo -e "${CYAN}Trellis Lite Installer${NC}"
 echo ""
+
+# Validate target directory exists before cd
+if [ ! -d "$TARGET_DIR" ]; then
+    echo -e "${RED}Error: target directory not found: ${TARGET_DIR}${NC}" >&2
+    echo -e "${RED}Usage: ./install.sh [target-dir] [developer-name] [--platforms <list>]${NC}" >&2
+    exit 1
+fi
 
 # Resolve target to absolute path
 TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
@@ -105,7 +117,12 @@ if has_platform "qoder" || has_platform "opencode"; then
         echo -e "${GREEN}→ Installing AGENTS.md (Qoder / OpenCode) ...${NC}"
         cp "$SRC_AGENTS" "$DST_AGENTS"
     fi
-    INSTALLED_PLATFORMS+=("Qoder" "OpenCode")
+    if has_platform "qoder"; then
+        INSTALLED_PLATFORMS+=("Qoder")
+    fi
+    if has_platform "opencode"; then
+        INSTALLED_PLATFORMS+=("OpenCode")
+    fi
 fi
 
 # Claude Code → CLAUDE.md
