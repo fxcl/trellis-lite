@@ -39,6 +39,7 @@ python3 .trellis-lite/scripts/trellis.py task start <name>
 python3 .trellis-lite/scripts/trellis.py task current
 python3 .trellis-lite/scripts/trellis.py task finish
 python3 .trellis-lite/scripts/trellis.py task archive <name>
+python3 .trellis-lite/scripts/trellis.py task cancel <name>
 python3 .trellis-lite/scripts/trellis.py task list
 ```
 
@@ -82,6 +83,9 @@ This creates the task directory with a starter `prd.md`. The task is auto-set as
 
 #### 1.3 Write PRD
 
+> **Read `.trellis-lite/skills/brainstorm.md` first** — it defines how to discover
+> requirements (explore the codebase before asking; one question at a time).
+
 Fill in `prd.md`:
 - **Goal** — one sentence
 - **Requirements** — bullet list
@@ -108,6 +112,8 @@ Goal: turn the PRD into working code that passes checks.
 
 #### 2.1 Load Specs
 
+> **Read `.trellis-lite/skills/before-dev.md` first** — mandatory pre-coding checklist.
+
 Before writing code, read relevant specs:
 
 ```bash
@@ -127,6 +133,9 @@ Write code following the PRD and specs. Options:
 - Agent should run lint/typecheck after implementing
 
 #### 2.3 Quality Check
+
+> **Read `.trellis-lite/skills/check.md`** — it defines the full verification procedure
+> and the report format.
 
 After implementation, verify quality:
 
@@ -161,6 +170,8 @@ This marks the task status as `done` and clears the active pointer. You can skip
 
 #### 3.1 Update Specs
 
+> **Read `.trellis-lite/skills/update-spec.md`** — how to write executable specs.
+
 Did you learn something worth keeping? Update `.trellis-lite/spec/`:
 - New pattern or convention discovered
 - Pitfall or gotcha hit during implementation
@@ -169,6 +180,8 @@ Did you learn something worth keeping? Update `.trellis-lite/spec/`:
 Even if "nothing to update", consciously decide.
 
 #### 3.2 Commit
+
+**Ask the user before committing — never auto-commit.** After confirmation:
 
 ```bash
 git status --porcelain
@@ -197,6 +210,7 @@ python3 .trellis-lite/scripts/trellis.py session --title "Title" --summary "Summ
 | Resume a task | `task current` → check PRD → continue |
 | Mark done | `task finish` (status → done, clears active pointer) |
 | Finish a task | commit → `task finish` → `task archive` → `session` |
+| Abandon a task | `task cancel <name>` (status → cancelled, directory kept) |
 | List specs | `specs` |
 
 ## Rules of Thumb

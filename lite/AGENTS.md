@@ -16,7 +16,7 @@ All task operations go through one script:
 python3 .trellis-lite/scripts/trellis.py <command>
 ```
 
-Key commands: `init`, `task create/start/current/finish/archive/list`, `session`, `context`, `specs`.
+Key commands: `init`, `task create/start/current/finish/archive/cancel/list`, `session`, `context`, `specs`.
 
 ### Specs
 

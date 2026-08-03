@@ -12,6 +12,7 @@ Usage:
     python3 trellis.py task current
     python3 trellis.py task finish
     python3 trellis.py task archive <name>
+    python3 trellis.py task cancel <name>
     python3 trellis.py task list
     python3 trellis.py session --title "Title" --summary "Summary" [--commit <hash>]
     python3 trellis.py context
@@ -204,6 +205,10 @@ def clear_current_task() -> None:
 
 def resolve_task_dir(task_input: str) -> Path | None:
     """Resolve task name to absolute directory path."""
+    # Reject path separators and traversal (e.g. "../spec")
+    if "/" in task_input or "\\" in task_input or ".." in task_input:
+        print(colored(f"Invalid task name: {task_input}", C_RED))
+        return None
     tasks_dir = get_tasks_dir()
     # Try direct: tasks/<input>
     candidate = tasks_dir / task_input
@@ -298,9 +303,10 @@ def cmd_task(args: list[str]) -> int:
         return _task_finish(rest)
     elif sub == "archive":
         return _task_archive(rest)
+    elif sub == "cancel":
+        return _task_cancel(rest)
     elif sub == "list":
         return _task_list(rest)
-    else:
         print(colored(f"Unknown task subcommand: {sub}", C_RED))
         return 1
 
@@ -391,6 +397,15 @@ def _task_start(args: list[str]) -> int:
         print(colored(f"Task not found: {args[0]}", C_RED))
         return 1
 
+    # Warn when other tasks are still in_progress (one task at a time)
+    tasks_dir = get_tasks_dir()
+    if tasks_dir.is_dir():
+        for t in sorted(tasks_dir.iterdir()):
+            if not t.is_dir() or t.name in (DIR_ARCHIVE, task_dir.name):
+                continue
+            if read_json(t / FILE_TASK_JSON).get("status") == "in_progress":
+                print(colored(f"Warning: '{t.name}' is still in_progress — one task at a time", C_YELLOW))
+
     # Update status
     task_json_path = task_dir / FILE_TASK_JSON
     data = read_json(task_json_path)
@@ -425,7 +440,7 @@ def _task_current(args: list[str]) -> int:
         print(f"  Status: {task_json.get('status', '?')}")
 
     # Show artifacts
-    for f in ["prd.md", "design.md", "implement.md"]:
+    for f in ["prd.md", "design.md"]:
         if (task_dir / f).exists():
             print(f"  ✓ {f}")
         else:
@@ -438,6 +453,11 @@ def _task_finish(args: list[str]) -> int:
     if current is None:
         print(colored("No active task to finish.", C_YELLOW))
         return 0
+
+    # Warn about uncommitted changes before finishing
+    dirty = git_status_porcelain()
+    if dirty:
+        print(colored(f"Warning: {len(dirty.splitlines())} uncommitted change(s) in working tree", C_YELLOW))
 
     # Update task status to done
     task_dir = get_repo_root() / current
@@ -500,6 +520,35 @@ def _task_archive(args: list[str]) -> int:
     return 0
 
 
+def _task_cancel(args: list[str]) -> int:
+    if not args:
+        print(colored("Usage: trellis.py task cancel <name>", C_RED))
+        return 1
+
+    task_dir = resolve_task_dir(args[0])
+    if task_dir is None:
+        print(colored(f"Task not found: {args[0]}", C_RED))
+        return 1
+
+    # Update status
+    task_json_path = task_dir / FILE_TASK_JSON
+    data = read_json(task_json_path)
+    if not data:
+        print(colored(f"Warning: {task_json_path.name} missing or corrupted", C_YELLOW))
+    data["status"] = "cancelled"
+    data["cancelled"] = datetime.now().isoformat()
+    write_json(task_json_path, data)
+
+    # Clear current if it was this task
+    current = get_current_task()
+    if current and Path(current).name == task_dir.name:
+        clear_current_task()
+
+    print(colored(f"✓ Task cancelled: {task_dir.name}", C_GREEN))
+    print(colored("  Directory kept in tasks/. Delete it manually if unneeded.", C_DIM))
+    return 0
+
+
 def _task_list(args: list[str]) -> int:
     tasks_dir = get_tasks_dir()
     if not tasks_dir.is_dir():
@@ -522,7 +571,7 @@ def _task_list(args: list[str]) -> int:
         marker = colored("→", C_GREEN) if current and Path(current).name == t.name else " "
         if status == "in_progress":
             status_color = C_GREEN
-        elif status in ("done", "archived"):
+        elif status in ("done", "archived", "cancelled"):
             status_color = C_DIM
         else:
             status_color = C_YELLOW
@@ -562,17 +611,23 @@ def cmd_session(args: list[str]) -> int:
         print(colored("Developer not initialized. Run: trellis.py init <name>", C_RED))
         return 1
 
-    # Find or create active journal
-    journals = sorted(workspace.glob(f"{JOURNAL_PREFIX}*.md"))
+    # Find or create active journal (parse numbers so rotation is safe after manual deletions)
+    journals: list[tuple[int, Path]] = []
+    for j in workspace.glob(f"{JOURNAL_PREFIX}*.md"):
+        m = re.match(rf"{JOURNAL_PREFIX}(\d+)\.md$", j.name)
+        if m:
+            journals.append((int(m.group(1)), j))
+    journals.sort()
+
     if not journals:
         journal = workspace / f"{JOURNAL_PREFIX}1.md"
         journal.write_text("# Journal 1\n\n", encoding="utf-8")
     else:
-        journal = journals[-1]
+        max_num, journal = journals[-1]
         # Check line count, rotate if needed
         lines = journal.read_text(encoding="utf-8").splitlines()
         if len(lines) >= MAX_JOURNAL_LINES:
-            num = len(journals) + 1
+            num = max_num + 1
             journal = workspace / f"{JOURNAL_PREFIX}{num}.md"
             journal.write_text(f"# Journal {num}\n\n", encoding="utf-8")
 
@@ -629,7 +684,7 @@ def cmd_context(args: list[str]) -> int:
         print(f"    Status: {data.get('status', '?')}")
 
         artifacts = []
-        for f in ["prd.md", "design.md", "implement.md"]:
+        for f in ["prd.md", "design.md"]:
             if (task_dir / f).exists():
                 artifacts.append(f"✓ {f}")
             else:
@@ -740,6 +795,7 @@ def print_help() -> None:
     print(f"  {colored('task current', C_GREEN)}                   Show active task")
     print(f"  {colored('task finish', C_GREEN)}                    Deactivate current task")
     print(f"  {colored('task archive', C_GREEN)} <name>            Archive a completed task")
+    print(f"  {colored('task cancel', C_GREEN)} <name>            Cancel an abandoned task (keeps directory)")
     print(f"  {colored('task list', C_GREEN)}                      List all active tasks")
     print(f"  {colored('session', C_GREEN)} --title \"T\" --summary \"S\"  Record a session journal entry")
     print(f"  {colored('context', C_GREEN)}                       Print full session context")

@@ -10,7 +10,7 @@
 
 | 原则 | 原版做法 | Lite 做法 | 动机 |
 |---|---|---|---|
-| **一个脚本搞定一切** | 20+ 文件分散在 `scripts/`, `paths.py`, `task_store.py`... | 单文件 `trellis.py`（~780 行） | 降低安装、维护、理解成本 |
+| **一个脚本搞定一切** | 20+ 文件分散在 `scripts/`, `paths.py`, `task_store.py`... | 单文件 `trellis.py`（~835 行） | 降低安装、维护、理解成本 |
 | **零外部依赖** | pnpm workspace + SQLite + 多平台运行时 | 纯 Python 3.9+ 标准库 | 个人开发者不想装一堆依赖 |
 | **文件即数据库** | SQLite 存储 tasks/memory + JSONL 上下文清单 | JSON 存任务，Markdown 存日志 | 去掉中间层，AI 直接消费 |
 | **AI 直接消费** | AI 读 JSONL 上下文清单（由 `get_context.py` 生成） | AI 直接读 PRD + spec 文件 | 去掉中间格式，减少信息损耗 |
@@ -93,7 +93,7 @@ AGENTS.md                         ← Qoder 入口（AI 读到的第一个文件
 
 ### 3.1 单文件设计（`trellis.py`）
 
-全部功能集中在一个 ~780 行文件中，按功能分区：
+全部功能集中在一个 ~835 行文件中，按功能分区：
 
 | 分区 | 行数 | 职责 |
 |---|---|---|
@@ -104,7 +104,7 @@ AGENTS.md                         ← Qoder 入口（AI 读到的第一个文件
 | Git helpers | ~35 | `status`/`log`/`branch`（subprocess + try/except） |
 | Current task | ~40 | `.current-task` 文件指针（无状态管理器） |
 | cmd_init | ~50 | 目录创建 + 名称校验 |
-| cmd_task | ~210 | create/start/current/finish/archive/list |
+| cmd_task | ~260 | create/start/current/finish/archive/cancel/list |
 | cmd_session | ~65 | 日志追加 + 自动轮转 |
 | cmd_context | ~55 | 汇总输出 |
 | cmd_specs | ~20 | 列出 spec 文件 |
@@ -118,8 +118,7 @@ AGENTS.md                         ← Qoder 入口（AI 读到的第一个文件
 tasks/07-26-login-api/
 ├── task.json    ← 元数据（title, status, created, branch, started, finished）
 ├── prd.md       ← 需求文档（AI 和用户共同维护）
-├── design.md    ← 设计笔记（可选，复杂任务）
-└── implement.md ← 实现笔记（可选）
+└── design.md    ← 设计笔记（可选，复杂任务）
 ```
 
 **状态机**：
@@ -128,6 +127,8 @@ tasks/07-26-login-api/
 planning ──(task start)──→ in_progress ──(task finish)──→ done ──(task archive)──→ archived
      │                         │                                                    │
      └─────────────────────────┴──────────── 也可以直接 archive（跳过 finish）──────┘
+
+planning / in_progress ──(task cancel)──→ cancelled（目录保留，不归档）
 ```
 
 **关键设计决策**：
@@ -180,14 +181,15 @@ AI 在 Phase 2（CODE）开始前**必须读取相关 spec**，这不是建议�
 
 ## 四、健壮性保障
 
-经过两轮代码审查，修复了以下类别的问题：
+经过三轮审查（前两轮代码缺陷，第三轮流程合理性），修复了以下类别的问题：
 
 | 类别 | 问题数 | 典型修复 |
 |---|---|---|
-| 安全 | 2 | `--slug` 路径穿越、`init` 名称注入 |
-| 数据完整性 | 3 | JSON 损坏保护、archive 目录嵌套、同日任务碰撞 |
+| 安全 | 3 | `--slug` 路径穿越、`init` 名称注入、`start/archive` 任务名路径穿越 |
+| 数据完整性 | 4 | JSON 损坏保护、archive 目录嵌套、同日任务碰撞、journal 轮转编号碰撞 |
 | 正确性 | 3 | CJK slug、状态更新遗漏、子串误匹配 |
 | 一致性 | 2 | 状态术语统一、git 命令统一 |
+| 流程（第三轮） | 4 | skills 断链（workflow.md 内联路由）、commit 指引与 no-auto-commit 规则矛盾、新增 `task cancel` 放弃出口、start/finish 增加状态警告 |
 
 ---
 
@@ -195,7 +197,7 @@ AI 在 Phase 2（CODE）开始前**必须读取相关 spec**，这不是建议�
 
 | 适合 | 不适合 |
 |---|---|
-| 1 人 + Qoder 的项目 | 多人团队协作 |
+| 1 人 + AI 编码工具（Qoder / Claude Code / OpenCode / Cline）的项目 | 多人团队协作 |
 | 需要 AI 遵循工作流但不想要重框架 | 需要 Channel 实时多 agent 协作 |
 | 偏好文件系统而非数据库 | 需要复杂任务依赖/甘特图 |
 | Python 3.9+ 环境 | 无 Python 环境（可未来用 Node 重写） |
