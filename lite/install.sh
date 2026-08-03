@@ -98,6 +98,10 @@ if [ -d "$DST_TRELLIS" ]; then
 else
     echo -e "${GREEN}→ Copying .trellis-lite/ ...${NC}"
     cp -r "$SRC_TRELLIS" "$DST_TRELLIS"
+    # Remove runtime-only files that may linger in the template copy
+    # (.current-task, .developer, __pycache__). init below recreates .developer.
+    rm -f "${DST_TRELLIS}/.current-task" "${DST_TRELLIS}/.developer"
+    rm -rf "${DST_TRELLIS}/scripts/__pycache__"
 fi
 
 echo ""
