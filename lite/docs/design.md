@@ -10,7 +10,7 @@
 
 | 原则 | 原版做法 | Lite 做法 | 动机 |
 |---|---|---|---|
-| **一个脚本搞定一切** | 28 个 Python 脚本分散在 `scripts/`, `task_store.py`, `task_context.py`... | 单文件 `trellis.py`（~835 行） | 降低安装、维护、理解成本 |
+| **一个脚本搞定一切** | 28 个 Python 脚本分散在 `scripts/`, `task_store.py`, `task_context.py`... | 单文件 `trellis.py`（~896 行） | 降低安装、维护、理解成本 |
 | **零外部依赖** | pnpm workspace + Node CLI + 多平台运行时 | 纯 Python 3.9+ 标准库 | 个人开发者不想装一堆依赖 |
 | **文件即数据库** | JSON 存任务 + JSONL 上下文清单 | JSON 存任务，Markdown 存日志 | 去掉中间层，AI 直接消费 |
 | **AI 直接消费** | AI 读 JSONL 上下文清单（`implement.jsonl`/`check.jsonl`，按任务圈定 spec/research 文件） | AI 直接读 PRD + spec 文件 | 去掉中间格式，减少信息损耗（代价：丢失按任务精准注入） |
@@ -93,7 +93,7 @@ AGENTS.md                         ← Qoder 入口（AI 读到的第一个文件
 
 ### 3.1 单文件设计（`trellis.py`）
 
-全部功能集中在一个 ~835 行文件中，按功能分区：
+全部功能集中在一个 ~896 行文件中，按功能分区：
 
 | 分区 | 行数 | 职责 |
 |---|---|---|
@@ -183,15 +183,17 @@ AI 在 Phase 2（CODE）开始前**必须读取相关 spec**，这不是建议�
 
 ## 四、健壮性保障
 
-经过三轮审查（前两轮代码缺陷，第三轮流程合理性），修复了以下类别的问题：
+经过多轮审查与加固，修复了以下类别的问题：
 
-| 类别 | 问题数 | 典型修复 |
-|---|---|---|
-| 安全 | 3 | `--slug` 路径穿越、`init` 名称注入、`start/archive` 任务名路径穿越 |
-| 数据完整性 | 4 | JSON 损坏保护、archive 目录嵌套、同日任务碰撞、journal 轮转编号碰撞 |
-| 正确性 | 3 | CJK slug、状态更新遗漏、子串误匹配 |
-| 一致性 | 2 | 状态术语统一、git 命令统一 |
-| 流程（第三轮） | 4 | skills 断链（workflow.md 内联路由）、commit 指引与 no-auto-commit 规则矛盾、新增 `task cancel` 放弃出口、start/finish 增加状态警告 |
+| 阶段 | 类别 | 问题数 | 典型修复 |
+|---|---|---|---|
+| 第 1–2 轮代码审查 | 安全 | 3 | `--slug` 路径穿越、`init` 名称注入、`start/archive` 任务名路径穿越 |
+| 第 1–2 轮代码审查 | 数据完整性 | 4 | JSON 损坏保护、archive 目录嵌套、同日任务碰撞、journal 轮转编号碰撞 |
+| 第 1–2 轮代码审查 | 正确性 | 3 | CJK slug、状态更新遗漏、子串误匹配 |
+| 第 1–2 轮代码审查 | 一致性 | 2 | 状态术语统一、git 命令统一 |
+| 第 3 轮流程审查 | 流程 | 4 | skills 断链（workflow.md 内联路由）、commit 指引与 no-auto-commit 规则矛盾、新增 `task cancel` 放弃出口、start/finish 增加状态警告 |
+| 用户加固（提交 7c7d059） | 语义 / UX | 5 | 拒绝任务名 `archive`（防归档自身容器）、glob → endswith 字面匹配避免 glob 注入、create 已有活跃任务时警告、title 引号配对剥离、README 平台表述精确化 |
+| 第 4 轮体验增强（本轮） | UX / 文档 | 4 | `task list --all` 查看已归档任务、`--commit` 哈希格式校验、`context` 输出 spec 列表 + 最近 journal 摘要、workflow.md 增加 `.current-task` 并发警告 |
 
 ---
 

@@ -220,3 +220,4 @@ python3 .trellis-lite/scripts/trellis.py session --title "Title" --summary "Summ
 3. Specs are for things you'll forget — write them when you learn something
 4. One active task at a time — finish before starting the next
 5. Journal entries are cheap — record every meaningful session
+6. **No parallel trellis commands** — `.current-task` is an unsynchronized file pointer. Run commands sequentially; running multiple instances in parallel can corrupt the active pointer.

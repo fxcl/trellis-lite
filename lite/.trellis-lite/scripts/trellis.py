@@ -13,7 +13,7 @@ Usage:
     python3 trellis.py task finish
     python3 trellis.py task archive <name>
     python3 trellis.py task cancel <name>
-    python3 trellis.py task list
+    python3 trellis.py task list [--all]
     python3 trellis.py session --title "Title" --summary "Summary" [--commit <hash>]
     python3 trellis.py context
     python3 trellis.py specs
@@ -569,20 +569,30 @@ def _task_cancel(args: list[str]) -> int:
 
 
 def _task_list(args: list[str]) -> int:
+    show_all = "--all" in args
     tasks_dir = get_tasks_dir()
     if not tasks_dir.is_dir():
         print(colored("No tasks directory.", C_DIM))
         return 0
 
-    tasks = sorted(tasks_dir.iterdir())
-    tasks = [t for t in tasks if t.is_dir() and t.name != DIR_ARCHIVE]
+    active = sorted(t for t in tasks_dir.iterdir() if t.is_dir() and t.name != DIR_ARCHIVE)
+    tasks = list(active)
+
+    if show_all:
+        archive = tasks_dir / DIR_ARCHIVE
+        if archive.is_dir():
+            for month_dir in sorted(archive.iterdir()):
+                if month_dir.is_dir():
+                    tasks.extend(sorted(t for t in month_dir.iterdir() if t.is_dir()))
+        tasks.sort(key=lambda p: p.name)
 
     if not tasks:
         print(colored("No active tasks.", C_DIM))
         return 0
 
+    title = "All Tasks (active + archive):" if show_all else "Active Tasks:"
+    print(colored(title, C_CYAN))
     current = get_current_task()
-    print(colored("Active Tasks:", C_CYAN))
     for t in tasks:
         data = read_json(t / FILE_TASK_JSON)
         status = data.get("status", "?")
@@ -624,6 +634,11 @@ def cmd_session(args: list[str]) -> int:
     if not title:
         print(colored("Usage: trellis.py session --title \"Title\" --summary \"Summary\"", C_RED))
         return 1
+
+    # Validate commit hash format (warn rather than reject — typo only affects journal display)
+    if commit and not re.match(r"^[0-9a-f]{4,40}$", commit):
+        print(colored(f"Warning: '{commit}' doesn't look like a git SHA (4-40 hex chars)", C_YELLOW))
+        commit = None
 
     workspace = get_workspace_dir()
     if workspace is None:
@@ -731,6 +746,33 @@ def cmd_context(args: list[str]) -> int:
         for line in log.splitlines():
             print(f"    {line}")
 
+    # Specs (top 5 + count)
+    spec_dir = get_spec_dir()
+    if spec_dir.is_dir():
+        specs = sorted(spec_dir.rglob("*.md"))
+        if specs:
+            print(f"  Specs: {len(specs)} file(s)")
+            for s in specs[:5]:
+                print(f"    - {s.relative_to(spec_dir)}")
+            if len(specs) > 5:
+                print(colored(f"    ... +{len(specs) - 5} more (use 'specs' to list all)", C_DIM))
+
+    # Latest journal entry (helps resume across sessions)
+    workspace = get_workspace_dir()
+    if workspace and workspace.is_dir():
+        journals: list[tuple[int, Path]] = []
+        for j in workspace.glob(f"{JOURNAL_PREFIX}*.md"):
+            m = re.match(rf"{JOURNAL_PREFIX}(\d+)\.md$", j.name)
+            if m:
+                journals.append((int(m.group(1)), j))
+        if journals:
+            journals.sort()
+            last_journal = journals[-1][1]
+            content = last_journal.read_text(encoding="utf-8")
+            titles = re.findall(r"^## (.+)$", content, re.MULTILINE)
+            if titles:
+                print(f"  Last session: {colored(titles[-1], C_DIM)}  ({last_journal.name})")
+
     print(colored("=" * 60, C_DIM))
     return 0
 
@@ -815,7 +857,7 @@ def print_help() -> None:
     print(f"  {colored('task finish', C_GREEN)}                    Deactivate current task")
     print(f"  {colored('task archive', C_GREEN)} <name>            Archive a completed task")
     print(f"  {colored('task cancel', C_GREEN)} <name>            Cancel an abandoned task (keeps directory)")
-    print(f"  {colored('task list', C_GREEN)}                      List all active tasks")
+    print(f"  {colored('task list', C_GREEN)} [--all]                   List tasks (--all includes archive)")
     print(f"  {colored('session', C_GREEN)} --title \"T\" --summary \"S\"  Record a session journal entry")
     print(f"  {colored('context', C_GREEN)}                       Print full session context")
     print(f"  {colored('specs', C_GREEN)}                         List available spec files")
