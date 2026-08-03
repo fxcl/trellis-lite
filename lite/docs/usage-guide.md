@@ -304,6 +304,30 @@ archive + session
 
 ---
 
+## 自带测试套件
+
+Trellis Lite 仓库自带 41 个 unittest 覆盖全部命令 + 安装脚本，作为开发者和 CI 的回归保护。
+
+```bash
+# 从仓库根运行
+python3 -m unittest discover -s lite/tests -t .
+
+# 运行某个模块
+python3 -m unittest lite.tests.test_task -v
+```
+
+| 测试文件 | 覆盖范围 |
+|---|---|
+| `test_init.py` | 7 个：目录创建、校验、幂等 |
+| `test_task.py` | 18 个：create / start / finish / archive / cancel / list，含路径穿越、CJK slug、连号保护 |
+| `test_session.py` | 5 个：journal 追加、hash 校验、未初始化、日志轮转 |
+| `test_context_specs_help.py` | 7 个：context / specs / help |
+| `test_install.py` | 4 个：默认 / claude / qoder+cline / 运行时路径清理 |
+
+CI：`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上自动跑（推 main 或 PR 触发）。
+
+---
+
 ## 参考文件
 
 | 文件 | 作用 |
@@ -314,3 +338,4 @@ archive + session
 | `.trellis-lite/spec/` | 编码规范（AI 写代码前必读） |
 | `.trellis-lite/workspace/<dev>/journal-*.md` | 跨会话记忆 |
 | `lite/docs/design.md` | 设计原理与架构文档 |
+| `lite/tests/` | 41 个 unittest（回归保护） |

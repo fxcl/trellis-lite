@@ -23,8 +23,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
+import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +44,8 @@ DIR_SPEC = "spec"
 DIR_WORKSPACE = "workspace"
 FILE_TASK_JSON = "task.json"
 JOURNAL_PREFIX = "journal-"
+# A single journal file is rotated once it exceeds this line count to keep
+# files small and to limit AI context-window consumption per read.
 MAX_JOURNAL_LINES = 2000
 
 # ANSI colors
@@ -145,7 +148,6 @@ def write_json(path: Path, data: dict) -> None:
 
 def git_status_porcelain() -> str:
     try:
-        import subprocess
         result = subprocess.run(
             ["git", "status", "--porcelain"],
             capture_output=True, text=True, timeout=10,
@@ -157,7 +159,6 @@ def git_status_porcelain() -> str:
 
 def git_log_oneline(n: int = 5) -> str:
     try:
-        import subprocess
         result = subprocess.run(
             ["git", "log", "--oneline", f"-{n}"],
             capture_output=True, text=True, timeout=10,
@@ -169,7 +170,6 @@ def git_log_oneline(n: int = 5) -> str:
 
 def git_branch() -> str:
     try:
-        import subprocess
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True, text=True, timeout=10,
@@ -240,6 +240,7 @@ def resolve_task_dir(task_input: str) -> Path | None:
 # ============================================================================
 
 def cmd_init(args: list[str]) -> int:
+    """Initialize developer identity + scaffold .trellis-lite/ at repo root."""
     if not args:
         print(colored("Usage: trellis.py init <your-name>", C_RED))
         return 1
@@ -295,6 +296,7 @@ def cmd_init(args: list[str]) -> int:
 # ============================================================================
 
 def cmd_task(args: list[str]) -> int:
+    """Dispatch to a task subcommand (create/start/current/finish/archive/cancel/list)."""
     if not args:
         print(colored("Usage: trellis.py task <create|start|current|finish|archive|cancel|list>", C_RED))
         return 1
@@ -322,6 +324,7 @@ def cmd_task(args: list[str]) -> int:
 
 
 def _task_create(args: list[str]) -> int:
+    """Create a new task directory with prd.md, set as current, warn if active exists."""
     if not args:
         print(colored('Usage: trellis.py task create "<title>" [--slug <name>]', C_RED))
         return 1
@@ -407,6 +410,7 @@ def _task_create(args: list[str]) -> int:
 
 
 def _task_start(args: list[str]) -> int:
+    """Mark a task in_progress, set as current, warn if another task is in progress."""
     if not args:
         print(colored("Usage: trellis.py task start <name>", C_RED))
         return 1
@@ -444,6 +448,7 @@ def _task_start(args: list[str]) -> int:
 
 
 def _task_current(args: list[str]) -> int:
+    """Print the active task, its status, and presence of prd.md/design.md."""
     current = get_current_task()
     if current is None:
         print(colored("No active task.", C_DIM))
@@ -468,6 +473,7 @@ def _task_current(args: list[str]) -> int:
 
 
 def _task_finish(args: list[str]) -> int:
+    """Mark the current task done, warn if working tree is dirty, clear active pointer."""
     current = get_current_task()
     if current is None:
         print(colored("No active task to finish.", C_YELLOW))
@@ -494,6 +500,7 @@ def _task_finish(args: list[str]) -> int:
 
 
 def _task_archive(args: list[str]) -> int:
+    """Move a task to tasks/archive/YYYY-MM/, with auto-increment on collision."""
     if not args:
         print(colored("Usage: trellis.py task archive <name>", C_RED))
         return 1
@@ -525,8 +532,6 @@ def _task_archive(args: list[str]) -> int:
         counter += 1
 
     archive_dir.mkdir(parents=True, exist_ok=True)
-
-    import shutil
     shutil.move(str(task_dir), str(dest))
 
     # Clear current if it was this task (exact match on directory name)
@@ -540,6 +545,7 @@ def _task_archive(args: list[str]) -> int:
 
 
 def _task_cancel(args: list[str]) -> int:
+    """Mark a task cancelled in place; directory is kept for history."""
     if not args:
         print(colored("Usage: trellis.py task cancel <name>", C_RED))
         return 1
@@ -569,6 +575,7 @@ def _task_cancel(args: list[str]) -> int:
 
 
 def _task_list(args: list[str]) -> int:
+    """List active tasks (or all including archive with --all)."""
     show_all = "--all" in args
     tasks_dir = get_tasks_dir()
     if not tasks_dir.is_dir():
@@ -613,6 +620,7 @@ def _task_list(args: list[str]) -> int:
 # ============================================================================
 
 def cmd_session(args: list[str]) -> int:
+    """Append a session entry to the current journal; rotate when it exceeds the cap."""
     title = None
     summary = None
     commit = None
@@ -782,6 +790,7 @@ def cmd_context(args: list[str]) -> int:
 # ============================================================================
 
 def cmd_specs(args: list[str]) -> int:
+    """List all .md files under spec/ that the AI can read."""
     spec_dir = get_spec_dir()
     if not spec_dir.is_dir():
         print(colored("No spec directory.", C_DIM))
@@ -866,6 +875,7 @@ def print_help() -> None:
 
 
 def main() -> int:
+    """Parse argv and dispatch to the selected command."""
     args = sys.argv[1:]
 
     if not args or args[0] in ("-h", "--help", "help"):

@@ -1,0 +1,51 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "lite/.trellis-lite/scripts/trellis.py"
+      - "lite/install.sh"
+      - "lite/tests/**"
+      - ".github/workflows/test.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "lite/.trellis-lite/scripts/trellis.py"
+      - "lite/install.sh"
+      - "lite/tests/**"
+      - ".github/workflows/test.yml"
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Python version
+        run: python3 --version
+
+      - name: Byte-compile trellis.py
+        run: |
+          python3 -m py_compile lite/.trellis-lite/scripts/trellis.py
+          echo "py_compile: OK"
+
+      - name: Install bash + run install.sh smoke test
+        run: |
+          mkdir -p /tmp/trellis-ci-target
+          chmod +x lite/install.sh
+          bash lite/install.sh /tmp/trellis-ci-target ci-tester --platforms qoder,claude
+          test -f /tmp/trellis-ci-target/.trellis-lite/scripts/trellis.py
+          test -f /tmp/trellis-ci-target/AGENTS.md
+          test -f /tmp/trellis-ci-target/.clinerules/trellis-lite.md
+          echo "install.sh: OK"
+
+      - name: Run unit tests
+        run: |
+          python3 -m unittest discover -s lite/tests -t . -v 2>&1
