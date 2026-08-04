@@ -919,6 +919,7 @@ def print_help() -> None:
     print(f"  {colored('session', C_GREEN)} --title \"T\" --summary \"S\"  Record a session journal entry")
     print(f"  {colored('context', C_GREEN)}                       Print full session context")
     print(f"  {colored('specs', C_GREEN)}                         List available spec files")
+    print(f"  {colored('doctor', C_GREEN)} [--fix]               Diagnose project state; --fix to repair")
     print(f"  {colored('help', C_GREEN)}                          Show this help")
     print(f"  {colored('version', C_GREEN)}                       Print version and exit")
     print(f"\nWorkflow: {colored('init', C_DIM)} → {colored('task create', C_DIM)} → {colored('task start', C_DIM)} → code → {colored('task archive', C_DIM)} → {colored('session', C_DIM)}")
@@ -927,6 +928,163 @@ def print_help() -> None:
 def cmd_version(args: list[str]) -> int:
     """Print the trellis-lite version and exit."""
     print(f"trellis-lite {__version__}")
+    return 0
+
+
+def cmd_doctor(args: list[str]) -> int:
+    """Diagnose Trellis Lite state. Pass --fix to repair common issues."""
+    fix = "--fix" in args
+    problems: list[str] = []
+    warnings: list[str] = []
+
+    print(colored(f"Trellis Lite Doctor (v{__version__})", C_CYAN))
+    if fix:
+        print(colored("  --fix mode: will repair what it can", C_YELLOW))
+    print()
+
+    # 1. Is .trellis-lite/ present?
+    try:
+        tdir = get_repo_root(init_ok=True) / TRELLIS_DIR
+    except Exception:
+        problems.append("Could not determine repo root")
+        return _doctor_finish(problems, warnings)
+
+    if not tdir.is_dir():
+        print(colored("  ✗", C_RED), f"{TRELLIS_DIR}/ not found")
+        problems.append(f"{TRELLIS_DIR}/ missing — run 'init <name>' first")
+        return _doctor_finish(problems, warnings)
+    print(colored("  ✓", C_GREEN), f"{TRELLIS_DIR}/ present at {tdir}")
+
+    # 2. Developer file
+    dev_file = tdir / FILE_DEVELOPER
+    if not dev_file.is_file():
+        problems.append(f"{FILE_DEVELOPER} missing")
+        print(colored("  ✗", C_RED), f"{FILE_DEVELOPER} missing")
+        if fix:
+            dev_file.write_text("name=developer\n", encoding="utf-8")
+            problems.pop()
+            print(colored("    ↳", C_DIM), "wrote default developer=developer")
+    else:
+        dev = get_developer()
+        if dev:
+            print(colored("  ✓", C_GREEN), f"Developer: {dev}")
+        else:
+            warnings.append(f"{FILE_DEVELOPER} exists but has no name= line")
+            print(colored("  ⚠", C_YELLOW), f"{FILE_DEVELOPER} has no name= line")
+
+    # 3. Required subdirectories
+    for sub in [(DIR_TASKS,), (DIR_TASKS, DIR_ARCHIVE), (DIR_SPEC,)]:
+        d = tdir.joinpath(*sub)
+        if not d.is_dir():
+            warnings.append(f"{'/'.join(sub)}/ missing")
+            print(colored("  ⚠", C_YELLOW), f"{'/'.join(sub)}/ missing")
+            if fix:
+                d.mkdir(parents=True, exist_ok=True)
+                print(colored("    ↳", C_DIM), f"created {d}")
+        else:
+            print(colored("  ✓", C_GREEN), f"{'/'.join(sub)}/ present")
+
+    # 4. Workspace
+    workspace = get_workspace_dir()
+    if workspace is None:
+        warnings.append("workspace/ not present (no developer or developer dir missing)")
+        print(colored("  ⚠", C_YELLOW), "workspace/ missing")
+    elif not workspace.is_dir():
+        warnings.append(f"workspace/{dev} missing")
+        print(colored("  ⚠", C_YELLOW), f"workspace/{dev} missing")
+        if fix:
+            workspace.mkdir(parents=True, exist_ok=True)
+            print(colored("    ↳", C_DIM), f"created {workspace}")
+    else:
+        # Check journal exists
+        journals = sorted(workspace.glob(f"{JOURNAL_PREFIX}*.md"))
+        if not journals:
+            warnings.append("no journal files")
+            print(colored("  ⚠", C_YELLOW), "no journal files")
+            if fix:
+                (workspace / f"{JOURNAL_PREFIX}1.md").write_text(
+                    "# Journal 1\n\n", encoding="utf-8"
+                )
+                print(colored("    ↳", C_DIM), "created journal-1.md")
+        else:
+            print(colored("  ✓", C_GREEN), f"workspace/{dev}/ has {len(journals)} journal(s)")
+
+    # 5. .current-task pointer
+    current = get_current_task()
+    if current:
+        ct_path = tdir.parent / current
+        if not ct_path.is_dir():
+            problems.append(f".current-task points to missing dir: {current}")
+            print(colored("  ✗", C_RED), f".current-task points to missing: {current}")
+            if fix:
+                clear_current_task()
+                # After successful repair, drop the problem from the list
+                # so the final summary doesn't report a fixed issue.
+                problems.pop()
+                print(colored("    ↳", C_DIM), "cleared stale .current-task pointer")
+        else:
+            data = read_json(ct_path / FILE_TASK_JSON)
+            status = data.get("status", "?")
+            print(colored("  ✓", C_GREEN), f"Active task: {ct_path.name} ({status})")
+    else:
+        print(colored("  ·", C_DIM), "No active task (informational)")
+
+    # 6. Task integrity: every task dir must have task.json
+    tasks_dir = tdir / DIR_TASKS
+    if tasks_dir.is_dir():
+        for t in tasks_dir.iterdir():
+            if not t.is_dir() or t.name == DIR_ARCHIVE:
+                continue
+            if not (t / FILE_TASK_JSON).is_file():
+                problems.append(f"orphan task dir (no {FILE_TASK_JSON}): {t.name}")
+                print(colored("  ✗", C_RED), f"orphan: {t.name} (no task.json)")
+
+        # 7. Journal number gaps
+        if workspace and workspace.is_dir():
+            nums = []
+            for j in workspace.glob(f"{JOURNAL_PREFIX}*.md"):
+                m = re.match(rf"{JOURNAL_PREFIX}(\d+)\.md$", j.name)
+                if m:
+                    nums.append(int(m.group(1)))
+            if nums:
+                nums.sort()
+                if nums[0] != 1:
+                    warnings.append(f"journal numbering starts at {nums[0]} (expected 1)")
+                    print(colored("  ⚠", C_YELLOW), f"journals start at {nums[0]} (gaps before)")
+
+    # 8. Python version
+    if sys.version_info < (3, 9):
+        problems.append(f"Python {sys.version_info[0]}.{sys.version_info[1]} is below 3.9")
+        print(colored("  ✗", C_RED), f"Python {sys.version_info[0]}.{sys.version_info[1]} < 3.9")
+    else:
+        print(colored("  ✓", C_GREEN), f"Python {sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")
+
+    # 9. Working tree state (informational)
+    dirty = git_status_porcelain()
+    if dirty:
+        print(colored("  ·", C_DIM), f"{len(dirty.splitlines())} dirty file(s) in working tree (informational)")
+
+    return _doctor_finish(problems, warnings)
+
+
+def _doctor_finish(problems: list[str], warnings: list[str]) -> int:
+    """Print summary line and return exit code."""
+    print()
+    if problems:
+        print(colored(f"✗ Found {len(problems)} problem(s):", C_RED))
+        for p in problems:
+            print(f"  - {p}")
+        print()
+        print("Run with --fix to auto-repair common issues, or fix manually.")
+        return 1
+    if warnings:
+        print(colored(f"⚠ {len(warnings)} warning(s):", C_YELLOW))
+        for w in warnings:
+            print(f"  - {w}")
+        print()
+        print("Run with --fix to auto-repair where safe.")
+        return 0
+    print(colored("✓ All checks passed.", C_GREEN))
     return 0
 
 
@@ -948,6 +1106,7 @@ def main() -> int:
         "context": cmd_context,
         "specs": cmd_specs,
         "version": cmd_version,
+        "doctor": cmd_doctor,
     }
 
     handler = dispatch.get(cmd)
