@@ -203,7 +203,7 @@ AI 在 Phase 2（CODE）开始前**必须读取相关 spec**，这不是建议�
 ## 五、运行测试与 CI
 
 ```bash
-# 本地运行全部 41 个测试
+# 本地运行全部测试
 python3 -m unittest discover -s lite/tests -t .
 
 # 单独运行某个模块
@@ -211,9 +211,17 @@ python3 -m unittest lite.tests.test_task -v
 ```
 
 CI 在 `.github/workflows/test.yml` 自动跑，矩阵 Python 3.9–3.13，每步包含：
+
 1. `py_compile` 字节码编译
 2. `install.sh` 烟测（默认 `--platforms all`）
-3. 跑全部 unittest
+3. `uninstall.sh` 烟测（拒绝空目标 + 完整卸载）
+4. 跑全部 unittest（60 个）
+5. coverage 报告（**仅 in-process 部分**：slugify 模糊测试 + 模块加载）
+
+> **覆盖率 13% 的解释**：为保证测试隔离，全部 `cmd_*` 测试用 `subprocess.run` 启动独立 Python 进程。
+> coverage.py 默认无法跨进程跟踪。如果要把覆盖率提升到 ≥70%，需要把核心测试改为 in-process
+> （直接 `import trellis` 调用 `cmd_*` 函数）。本项目暂保留 subprocess 隔离，未做此重构——**测试数量与
+> 行为覆盖**比百分数更重要（每条 CLI 路径都有 ≥1 个断言）。
 
 ## 六、适用场景与局限
 

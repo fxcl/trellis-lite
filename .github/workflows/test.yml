@@ -7,6 +7,7 @@ on:
       - "lite/.trellis-lite/scripts/trellis.py"
       - "lite/install.sh"
       - "lite/uninstall.sh"
+      - "lite/.trellis-lite/spec/TEMPLATE.md"
       - "lite/tests/**"
       - ".github/workflows/test.yml"
   pull_request:
@@ -15,6 +16,7 @@ on:
       - "lite/.trellis-lite/scripts/trellis.py"
       - "lite/install.sh"
       - "lite/uninstall.sh"
+      - "lite/.trellis-lite/spec/TEMPLATE.md"
       - "lite/tests/**"
       - ".github/workflows/test.yml"
 
@@ -63,3 +65,14 @@ jobs:
       - name: Run unit tests
         run: |
           python3 -m unittest discover -s lite/tests -t . -v 2>&1
+
+      - name: Measure coverage (informational — subprocess tests are not tracked)
+        run: |
+          python3 -m pip install --quiet coverage
+          # Note: most tests spawn the CLI as a subprocess for isolation,
+          # which coverage cannot follow. The number below reflects only the
+          # in-process portions (slugify fuzz, module-level constants). To
+          # raise it, refactor tests to call cmd_* functions directly.
+          python3 -m coverage run --include="lite/.trellis-lite/scripts/trellis.py" \
+            -m unittest discover -s lite/tests -t . 2>&1
+          python3 -m coverage report --include="lite/.trellis-lite/scripts/trellis.py" || true
