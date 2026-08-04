@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Trellis Lite pre-commit hook
+#
+# Install by copying or symlinking to .git/hooks/pre-commit:
+#   ln -s ../../lite/hooks/pre-commit .git/hooks/pre-commit
+# (or copy, if symlinks aren't allowed)
+#
+# What it checks (each is optional and skippable):
+#   1. .trellis-lite/ is initialized
+#   2. doctor reports no problems (use --no-verify to skip when broken)
+#   3. No active task in `planning` state (warn only)
+#
+# To bypass the hook entirely (e.g. urgent hotfix):
+#   git commit --no-verify
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+TRELLIS_DIR="$REPO_ROOT/.trellis-lite"
+SCRIPT="$TRELLIS_DIR/scripts/trellis.py"
+
+# Locate the script even if installed at a non-standard path
+if [ ! -f "$SCRIPT" ]; then
+    # Try lite-relative paths (when hook is installed via Trellis Lite)
+    for candidate in "$REPO_ROOT/lite/.trellis-lite/scripts/trellis.py" \
+                       "$REPO_ROOT/scripts/trellis.py"; do
+        if [ -f "$candidate" ]; then
+            SCRIPT="$candidate"
+            break
+        fi
+    done
+fi
+
+# Skip silently if Trellis Lite is not installed in this repo
+if [ ! -f "$SCRIPT" ]; then
+    exit 0
+fi
+
+echo "Trellis Lite pre-commit checks..."
+
+# Check 1: doctor must pass (warnings are OK, problems block the commit)
+if ! python3 "$SCRIPT" doctor > /tmp/trellis-doctor-output.txt 2>&1; then
+    echo ""
+    echo "✗ Trellis Lite doctor found problems:"
+    cat /tmp/trellis-doctor-output.txt
+    echo ""
+    echo "Fix the issues above, or use 'git commit --no-verify' to bypass."
+    echo "Tip: run '$SCRIPT doctor --fix' to auto-repair common issues."
+    exit 1
+fi
+
+# Check 2: if a task is active and in planning status, warn (don't block)
+ACTIVE_LINE=$(python3 "$SCRIPT" context 2>/dev/null | grep -E "^\s+Active task:" || true)
+if echo "$ACTIVE_LINE" | grep -q "Active task: .*planning"; then
+    echo ""
+    echo "⚠ Warning: An active task is still in 'planning' status."
+    echo "  Run 'task start <name>' when ready to begin work."
+    # Warning only — don't exit non-zero
+fi
+
+echo "✓ Trellis Lite pre-commit checks passed."
+exit 0

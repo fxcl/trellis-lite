@@ -220,3 +220,24 @@ fi
 
 echo ""
 echo -e "${GREEN}Done.${NC}"
+
+# --- 5. Optionally install pre-commit hook (opt-in) ---
+
+HOOK_SRC="${SCRIPT_DIR}/hooks/pre-commit"
+HOOK_DST="${TARGET_DIR}/.git/hooks/pre-commit"
+
+if [ -d "${TARGET_DIR}/.git" ] && [ -f "$HOOK_SRC" ]; then
+    if [ -f "$HOOK_DST" ]; then
+        echo -e "${YELLOW}⚠  .git/hooks/pre-commit already exists. Skipping (review manually).${NC}"
+    else
+        echo -e "${GREEN}→ Installing pre-commit hook ...${NC}"
+        cp "$HOOK_SRC" "$HOOK_DST"
+        chmod +x "$HOOK_DST"
+        echo -e "  The hook will run ${CYAN}trellis doctor${NC} before each commit."
+        echo -e "  To bypass: ${CYAN}git commit --no-verify${NC}"
+    fi
+elif [ ! -d "${TARGET_DIR}/.git" ]; then
+    echo ""
+    echo -e "${YELLOW}Note: no .git/ directory found. Skipping pre-commit hook install.${NC}"
+    echo -e "  After 'git init', copy lite/hooks/pre-commit to .git/hooks/pre-commit manually."
+fi
