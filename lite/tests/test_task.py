@@ -190,3 +190,50 @@ class TestTaskLifecycle(unittest.TestCase):
     def test_list_empty(self) -> None:
         r = self.h.run(["task", "list"])
         self.assertIn("No active tasks", r.stdout)
+
+    # ---- delete -----------------------------------------------------------
+
+    def _task_path(self, slug_suffix: str) -> Path | None:
+        """Return path of task dir ending in -<slug_suffix>, or None if not found."""
+        from ._helpers import task_dirs
+        matches = [
+            p for p in task_dirs(self.h.tmpdir)
+            if p.name.endswith(f"-{slug_suffix}")
+        ]
+        if len(matches) == 0:
+            return None
+        self.assertEqual(len(matches), 1,
+                         f"expected 1 task, got {len(matches)}: {[p.name for p in matches]}")
+        return matches[0]
+
+    def test_delete_removes_cancelled_task(self) -> None:
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "cancel", "t"])
+        r = self.h.run(["task", "delete", "t"])
+        self.assertEqual(r.returncode, 0)
+        self.assertIsNone(self._task_path("t"), "task dir should be gone after delete")
+
+    def test_delete_refuses_non_cancelled_without_force(self) -> None:
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        r = self.h.run(["task", "delete", "t"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Refusing to delete", r.stdout)
+        self.assertIsNotNone(self._task_path("t"), "task dir must survive a refused delete")
+
+    def test_delete_force_overrides_status(self) -> None:
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        r = self.h.run(["task", "delete", "t", "--force"])
+        self.assertEqual(r.returncode, 0)
+        self.assertIsNone(self._task_path("t"), "task dir should be gone after --force delete")
+
+    def test_delete_clears_active_pointer(self) -> None:
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "cancel", "t"])
+        self.h.run(["task", "delete", "t"])
+        ct = self.h.tmpdir / ".trellis-lite/.current-task"
+        self.assertFalse(ct.exists())
+
+    def test_delete_missing_task_returns_error(self) -> None:
+        r = self.h.run(["task", "delete", "ghost"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("not found", r.stdout)
