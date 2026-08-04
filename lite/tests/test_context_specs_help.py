@@ -2,10 +2,58 @@
 
 from __future__ import annotations
 
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 from ._helpers import Harness
+
+
+class TestRepoRootGuard(unittest.TestCase):
+    """Commands other than `init` must error when no .trellis-lite/ is found."""
+
+    def setUp(self) -> None:
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="trellis-noinit-"))
+        self.script = Path(__file__).resolve().parent.parent / ".trellis-lite/scripts/trellis.py"
+
+    def tearDown(self) -> None:
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _run(self, args: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["python3", str(self.script), *args],
+            cwd=str(self.tmpdir),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+    def test_task_create_errors_outside_project(self) -> None:
+        r = self._run(["task", "create", "X"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("not inside a Trellis Lite project", r.stdout + r.stderr)
+
+    def test_context_errors_outside_project(self) -> None:
+        r = self._run(["context"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("not inside a Trellis Lite project", r.stdout + r.stderr)
+
+    def test_session_errors_outside_project(self) -> None:
+        r = self._run(["session", "--title", "T"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("not inside a Trellis Lite project", r.stdout + r.stderr)
+
+    def test_init_works_outside_project(self) -> None:
+        # init is the only command that creates .trellis-lite/, so it must
+        # succeed even when no project exists on disk.
+        r = self._run(["init", "tester"])
+        self.assertEqual(r.returncode, 0, msg=f"init failed: {r.stdout}\n{r.stderr}")
+        self.assertTrue((self.tmpdir / ".trellis-lite").is_dir())
+
+
+
 
 
 class TestContext(unittest.TestCase):

@@ -6,6 +6,7 @@ on:
     paths:
       - "lite/.trellis-lite/scripts/trellis.py"
       - "lite/install.sh"
+      - "lite/uninstall.sh"
       - "lite/tests/**"
       - ".github/workflows/test.yml"
   pull_request:
@@ -13,6 +14,7 @@ on:
     paths:
       - "lite/.trellis-lite/scripts/trellis.py"
       - "lite/install.sh"
+      - "lite/uninstall.sh"
       - "lite/tests/**"
       - ".github/workflows/test.yml"
 
@@ -45,6 +47,18 @@ jobs:
           test -f /tmp/trellis-ci-target/AGENTS.md
           test -f /tmp/trellis-ci-target/.clinerules/trellis-lite.md
           echo "install.sh: OK"
+
+      - name: Uninstall.sh smoke test
+        run: |
+          chmod +x lite/uninstall.sh
+          # Refuse when nothing installed (exit code != 0)
+          mkdir -p /tmp/trellis-empty
+          bash lite/uninstall.sh /tmp/trellis-empty || echo "  ✓ correctly refused empty target"
+          # Run on the install.sh-created target
+          bash lite/uninstall.sh /tmp/trellis-ci-target
+          test ! -d /tmp/trellis-ci-target/.trellis-lite
+          test ! -f /tmp/trellis-ci-target/AGENTS.md
+          echo "uninstall.sh: OK"
 
       - name: Run unit tests
         run: |

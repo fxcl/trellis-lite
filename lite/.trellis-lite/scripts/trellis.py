@@ -65,14 +65,24 @@ def colored(text: str, color: str) -> str:
 # Path helpers
 # ============================================================================
 
-def get_repo_root() -> Path:
-    """Find nearest ancestor containing .trellis-lite/."""
+def get_repo_root(init_ok: bool = False) -> Path:
+    """Find nearest ancestor containing .trellis-lite/.
+
+    Args:
+        init_ok: If True, return cwd when no .trellis-lite/ is found (for the
+            init command itself, which creates the directory). If False (default),
+            exit 1 with a clear message — silent fallback would cause other commands
+            to write into the wrong directory.
+    """
     current = Path.cwd().resolve()
     while current != current.parent:
         if (current / TRELLIS_DIR).is_dir():
             return current
         current = current.parent
-    return Path.cwd().resolve()
+    if init_ok:
+        return Path.cwd().resolve()
+    print(colored("Error: not inside a Trellis Lite project. Run 'init' first.", C_RED))
+    sys.exit(1)
 
 
 def get_trellis_dir() -> Path:
@@ -252,7 +262,8 @@ def cmd_init(args: list[str]) -> int:
         print(colored("Error: name must contain only letters, digits, hyphens, or underscores", C_RED))
         return 1
 
-    tdir = get_trellis_dir()
+    # init is the only command allowed to run without an existing .trellis-lite/
+    tdir = get_repo_root(init_ok=True) / TRELLIS_DIR
 
     # Create directories
     (tdir / DIR_TASKS / DIR_ARCHIVE).mkdir(parents=True, exist_ok=True)
@@ -476,8 +487,10 @@ def _task_finish(args: list[str]) -> int:
     """Mark the current task done, warn if working tree is dirty, clear active pointer."""
     current = get_current_task()
     if current is None:
-        print(colored("No active task to finish.", C_YELLOW))
-        return 0
+        # "no active task" when user asked to finish is a semantic error —
+        # return non-zero so CI and shell scripts can detect it.
+        print(colored("No active task to finish.", C_RED))
+        return 1
 
     # Warn about uncommitted changes before finishing
     dirty = git_status_porcelain()

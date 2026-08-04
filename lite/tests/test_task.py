@@ -104,8 +104,9 @@ class TestTaskLifecycle(unittest.TestCase):
         self.assertFalse(ct.exists())
 
     def test_finish_no_active(self) -> None:
+        # "no active task" when user asked to finish is a semantic error (return 1)
         r = self.h.run(["task", "finish"])
-        self.assertEqual(r.returncode, 0)
+        self.assertNotEqual(r.returncode, 0)
         self.assertIn("No active task", r.stdout)
 
     # ---- archive ----------------------------------------------------------

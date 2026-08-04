@@ -37,6 +37,9 @@ cd /path/to/your/project
 
 # 3. 创建第一个任务
 python3 .trellis-lite/scripts/trellis.py task create "实现用户登录"
+
+# 卸载（需要时）
+/path/to/lite/uninstall.sh .
 ```
 
 ### 支持的平台
@@ -126,7 +129,7 @@ python3 -m unittest discover -s lite/tests -t .
 python3 -m unittest lite.tests.test_task -v
 ```
 
-CI：`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上跑 py_compile + install.sh 烟测 + unittest，每次改动都会触发。
+CI：`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上跑 py_compile + install.sh + uninstall.sh 烟测 + unittest，每次改动都会触发。
 
 ## 与原版 Trellis 的关系
 

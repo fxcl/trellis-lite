@@ -1,4 +1,4 @@
-"""Tests for the install.sh multi-platform installer."""
+"""Tests for the install.sh and uninstall.sh lifecycle."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 
 from ._helpers import INSTALL_SH, LITE_ROOT
+
+UNINSTALL_SH = LITE_ROOT / "uninstall.sh"
 
 
 class TestInstall(unittest.TestCase):
@@ -66,3 +68,71 @@ class TestInstall(unittest.TestCase):
         finally:
             if not had_stale:
                 stale.unlink(missing_ok=True)
+
+
+class TestUninstall(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="trellis-uninstall-"))
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _run_uninstall(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(UNINSTALL_SH), *args],
+            cwd=str(self.tmpdir),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def _install_all(self) -> None:
+        subprocess.run(
+            ["bash", str(INSTALL_SH), str(self.tmpdir), "tester", "--platforms", "all"],
+            capture_output=True, text=True, timeout=30, check=True,
+        )
+
+    def test_uninstall_removes_runtime_and_entries(self) -> None:
+        self._install_all()
+        # Sanity: install populated everything
+        for p in (".trellis-lite", "AGENTS.md", "CLAUDE.md", ".clinerules"):
+            self.assertTrue((self.tmpdir / p).exists(), f"{p} should exist post-install")
+
+        r = self._run_uninstall(str(self.tmpdir))
+        self.assertEqual(r.returncode, 0, f"uninstall failed: {r.stdout}\n{r.stderr}")
+
+        # Runtime and platform entries must be gone
+        for p in (".trellis-lite", "AGENTS.md", "CLAUDE.md", ".clinerules"):
+            self.assertFalse((self.tmpdir / p).exists(), f"{p} should be removed post-uninstall")
+
+    def test_uninstall_refuses_when_nothing_installed(self) -> None:
+        """Empty dir with no Trellis artifacts must be rejected, not silently OK."""
+        r = self._run_uninstall(str(self.tmpdir))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("does not appear to have Trellis Lite installed", r.stdout + r.stderr)
+
+    def test_uninstall_default_target_is_cwd(self) -> None:
+        """When called without args, uninstall operates on cwd."""
+        self._install_all()
+        # Run uninstall from inside the project, with no args
+        r = subprocess.run(
+            ["bash", str(UNINSTALL_SH)],
+            cwd=str(self.tmpdir),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(r.returncode, 0)
+        self.assertFalse((self.tmpdir / ".trellis-lite").exists())
+
+    def test_uninstall_keeps_other_files(self) -> None:
+        """Uninstall must not touch unrelated files."""
+        self._install_all()
+        # Create a marker file
+        marker = self.tmpdir / "user_data.txt"
+        marker.write_text("important data")
+
+        r = self._run_uninstall(str(self.tmpdir))
+        self.assertEqual(r.returncode, 0)
+        self.assertTrue(marker.exists(), "uninstall must not delete unrelated files")
+        self.assertEqual(marker.read_text(), "important data")
