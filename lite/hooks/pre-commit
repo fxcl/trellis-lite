@@ -53,8 +53,12 @@ fi
 rm -f "$DOCTOR_OUTPUT"
 
 # Check 2: if a task is active and in planning status, warn (don't block)
-ACTIVE_LINE=$(python3 "$SCRIPT" context 2>/dev/null | grep -E "^\s+Active task:" || true)
-if echo "$ACTIVE_LINE" | grep -q "Active task: .*planning"; then
+#   cmd_context prints "Status: <status>" on its own line when a task is active.
+#   We capture the full context output and grep for the planning status on
+#   that dedicated line (not on the "Active task:" line, which only holds
+#   the task path).
+CTX_OUTPUT=$(python3 "$SCRIPT" context 2>/dev/null || true)
+if echo "$CTX_OUTPUT" | grep -q "Status: planning"; then
     echo ""
     echo "⚠ Warning: An active task is still in 'planning' status."
     echo "  Run 'task start <name>' when ready to begin work."

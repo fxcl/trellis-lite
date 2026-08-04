@@ -281,6 +281,10 @@ def set_status(task_dir: Path, new_status: str, *, when: str | None = None) -> b
     - Illegal transition (current → new_status not in ALLOWED_TRANSITIONS)
     - Missing file / corrupted JSON / empty dict / non-dict
 
+    Idempotent: if the task is already at new_status, returns True without
+    rewriting the file or updating timestamps. This keeps re-invoking a CLI
+    command (e.g. `task start` on an in_progress task) a safe no-op.
+
     Returns False (not raise) so callers can treat all failure modes uniformly
     via the same `if not set_status(...): print Warning; continue` pattern.
     The `when` argument names the timestamp field (e.g. "started", "finished",
@@ -292,9 +296,13 @@ def set_status(task_dir: Path, new_status: str, *, when: str | None = None) -> b
     data = read_json_strict(task_json_path)
     if data is None:
         return False
+    current = data.get("status")
+    # Idempotent: already at target status → success without side effects.
+    # Re-running `task start` on an in_progress task must not look like failure.
+    if current == new_status:
+        return True
     # Enforce forward-only transition. Tasks without a recorded current status
     # (e.g. legacy or just-created planning task) skip this check.
-    current = data.get("status")
     if current in STATUSES and new_status not in ALLOWED_TRANSITIONS[current]:
         return False
     data["status"] = new_status
@@ -588,8 +596,14 @@ def _task_start(args: list[str]) -> int:
             if read_json(t / FILE_TASK_JSON).get("status") == "in_progress":
                 print(colored(f"Warning: '{t.name}' is still in_progress — one task at a time", C_YELLOW))
 
-    # Update status via the central state-machine helper
-    if not set_status(task_dir, "in_progress", when="started"):
+    # Update status via the central state-machine helper.
+    # set_status is idempotent (returns True when already in_progress), so we
+    # pre-check the current status to show an accurate message: a re-start on
+    # an already-active task is a benign no-op, not a corrupted file.
+    existing_status = read_json(task_dir / FILE_TASK_JSON).get("status")
+    if existing_status == "in_progress":
+        print(colored(f"Note: '{task_dir.name}' is already in_progress.", C_DIM))
+    elif not set_status(task_dir, "in_progress", when="started"):
         print(colored(
             f"Warning: {task_dir.name}/task.json missing or corrupted; "
             f"status not updated. Run 'trellis.py doctor --fix' to repair.",

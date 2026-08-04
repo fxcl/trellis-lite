@@ -23,10 +23,13 @@
 - **任务状态机真正生效（`set_status` 现在拒绝非法转移）**：之前 `ALLOWED_TRANSITIONS` 注释承诺了"forward-only"但代码只检查目标状态是否合法（如 `done → in_progress` 这样的回滚原本能成功）。新行为：`set_status` 同时校验转移合法性，archive/cancelled 终态不可再转移；`done → cancelled` 显式允许（用户改主意）。内部用 `read_json_strict` 替代 `read_json` + 内联解析，丢失数据 vs 缺失文件的语义更清晰。
 - **`doctor --fix` 不再把已修复的 warning 留在 summary 列表里**：之前 `--fix` 只在 `problems` 路径 pop，新行为：warnings 路径同样 pop（`tasks/archive/` 等子目录、`workspace/<dev>`、`journal-1.md` 自动创建后），summary 现在能正确反映"已修好"。
 - **`doctor` 新增 journal 内部间隔检测**：之前只检查编号是否从 1 开始，现在扫描相邻 journal-N.md 之间的 gap（如 `1, 3, 5` 提示"手动删除 / 部分轮转"）。
+- **`task start` 在任务已 `in_progress` 时不再报误导性"corrupted"警告**：之前 `set_status` 对同状态返回 `False`（因为 `ALLOWED_TRANSITIONS` 不含自身），调用方把所有 `False` 统一解释为"task.json missing or corrupted"。新行为：`set_status` 幂等化（同状态返回 `True`，不重写文件、不更新时间戳）；`_task_start` 预检当前状态，对已激活任务输出友好提示 `Note: 'xxx' is already in_progress.`。
 
 ### 文档
-- README.md / usage-guide.md / design.md / best-practices.md 同步：测试数量 41 → 74；行数 906 → 1100+；子命令清单加 `task delete` / `version` / `doctor` / `task list --all`。
+- README.md / usage-guide.md / design.md / best-practices.md 同步：测试数量 112 → 115；行数 906 → 1100+；子命令清单加 `task delete` / `version` / `doctor` / `task list --all`。
 - 运行测试命令修正：之前 `python3 -m unittest discover -s lite/tests -t .` 在 Python 3.9+ 相对 import 失败；改为 `python3 -m unittest tests.test_*`。
+- AGENTS.md 命令清单补全 `task delete` / `doctor` / `version`。
+- `exit-codes.md` 新增"退出码不对称 rationale"章节：解释 `task finish` 在 `task.json` 损坏时返回 1（不可逆，须中止）vs `start` / `archive` / `cancel` 返回 0（可恢复，降级继续）的设计依据。
 - `docs/design.md` 任务系统小节补"时间戳约定"：明确 `created` / `started` / `finished` / `archived` / `cancelled` 各自对应哪个事件；解释 `planning` 任务**没有** `started` 字段是正确语义。
 
 ---

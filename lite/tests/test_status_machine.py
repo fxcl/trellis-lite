@@ -163,6 +163,28 @@ class TestSetStatusHelper(unittest.TestCase):
         (self.task_dir / FILE_TASK_JSON).write_text(json.dumps(data), encoding="utf-8")
         self.assertTrue(set_status(self.task_dir, "in_progress", when="started"))
 
+    def test_set_status_idempotent_on_same_status(self) -> None:
+        # Re-applying the current status is a benign no-op (returns True),
+        # so CLI commands like `task start` stay safe when re-invoked.
+        self.assertTrue(set_status(self.task_dir, "in_progress", when="started"))
+        first_started = json.loads(
+            (self.task_dir / FILE_TASK_JSON).read_text()
+        )["started"]
+        # Re-apply — must succeed without rewriting the timestamp.
+        self.assertTrue(set_status(self.task_dir, "in_progress", when="started"))
+        second_started = json.loads(
+            (self.task_dir / FILE_TASK_JSON).read_text()
+        )["started"]
+        self.assertEqual(first_started, second_started)
+
+    def test_set_status_idempotent_does_not_enable_rollback(self) -> None:
+        # Idempotency only covers same-status; done → done is fine, but
+        # done → in_progress (a different status) must still be blocked.
+        self.assertTrue(set_status(self.task_dir, "in_progress", when="started"))
+        self.assertTrue(set_status(self.task_dir, "done", when="finished"))
+        self.assertTrue(set_status(self.task_dir, "done"))  # idempotent
+        self.assertFalse(set_status(self.task_dir, "in_progress"))  # rollback blocked
+
 
 if __name__ == "__main__":
     unittest.main()

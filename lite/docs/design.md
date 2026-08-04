@@ -12,7 +12,7 @@
 
 | 原则 | 原版做法 | Lite 做法 | 动机 |
 |---|---|---|---|
-| **一个脚本搞定一切** | 28 个 Python 脚本分散在 `scripts/`, `task_store.py`, `task_context.py`... | 单文件 `trellis.py`（~1316 行） | 降低安装、维护、理解成本 |
+| **一个脚本搞定一切** | 28 个 Python 脚本分散在 `scripts/`, `task_store.py`, `task_context.py`... | 单文件 `trellis.py`（~1330 行） | 降低安装、维护、理解成本 |
 | **零外部依赖** | pnpm workspace + Node CLI + 多平台运行时 | 纯 Python 3.9+ 标准库 | 个人开发者不想装一堆依赖 |
 | **文件即数据库** | JSON 存任务 + JSONL 上下文清单 | JSON 存任务，Markdown 存日志 | 去掉中间层，AI 直接消费 |
 | **AI 直接消费** | AI 读 JSONL 上下文清单（`implement.jsonl`/`check.jsonl`，按任务圈定 spec/research 文件） | AI 直接读 PRD + spec 文件 | 去掉中间格式，减少信息损耗（代价：丢失按任务精准注入） |
@@ -95,7 +95,7 @@ AGENTS.md                         ← Qoder 入口（AI 读到的第一个文件
 
 ### 3.1 单文件设计（`trellis.py`）
 
-全部功能集中在一个 ~1316 行文件中，按功能分区：
+全部功能集中在一个 ~1330 行文件中，按功能分区：
 
 | 分区 | 行数 | 职责 |
 |---|---|---|
@@ -205,7 +205,7 @@ AI 在 Phase 2（CODE）开始前**必须读取相关 spec**，这不是建议�
 | 第 3 轮流程审查 | 流程 | 4 | skills 断链（workflow.md 内联路由）、commit 指引与 no-auto-commit 规则矛盾、新增 `task cancel` 放弃出口、start/finish 增加状态警告 |
 | 用户加固（提交 7c7d059） | 语义 / UX | 5 | 拒绝任务名 `archive`（防归档自身容器）、glob → endswith 字面匹配避免 glob 注入、create 已有活跃任务时警告、title 引号配对剥离、README 平台表述精确化 |
 | 第 4 轮体验增强（本轮） | UX / 文档 | 4 | `task list --all` 查看已归档任务、`--commit` 哈希格式校验、`context` 输出 spec 列表 + 最近 journal 摘要、workflow.md 增加 `.current-task` 并发警告 |
-| 本轮（质量提升） | 测试 / CI | 2 | `lite/tests/` 112 个 unittest 覆盖全部命令（unittest 零依赖）；`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上跑 py_compile + install.sh 烟测 + uninstall.sh 烟测 + unittest + coverage 报告；`trellis.py` 全量返回值类型注解（32/32）并补 14 个 cmd_* docstring |
+| 本轮（质量提升） | 测试 / CI | 2 | `lite/tests/` 116 个 unittest 覆盖全部命令（unittest 零依赖）；`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上跑 py_compile + install.sh 烟测 + uninstall.sh 烟测 + unittest + coverage 报告；`trellis.py` 全量返回值类型注解（32/32）并补 14 个 cmd_* docstring |
 
 ---
 
@@ -224,7 +224,7 @@ CI 在 `.github/workflows/test.yml` 自动跑，矩阵 Python 3.9–3.13，每�
 1. `py_compile` 字节码编译
 2. `install.sh` 烟测（默认 `--platforms all`）
 3. `uninstall.sh` 烟测（拒绝空目标 + 完整卸载）
-4. 跑全部 unittest（104 个）
+4. 跑全部 unittest（116 个）
 5. coverage 报告（**仅 in-process 部分**：slugify 模糊测试 + 模块加载）
 
 > **覆盖率 13% 的解释**：为保证测试隔离，全部 `cmd_*` 测试用 `subprocess.run` 启动独立 Python 进程。

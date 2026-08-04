@@ -30,30 +30,30 @@ slugify = _trellis.slugify
 # A pool of adversarial unicode characters — covers common edge cases
 # found in real titles, especially in multilingual teams.
 _UNICODE_POOL = (
-    "用户登录"        # Chinese
-    "ユーザー認証"   # Japanese
-    "Войти"          # Cyrillic
-    "🔐login"        # Emoji
-    "café"           # Latin-1 supplement
-    "αβγδ"           # Greek
-    "नमस्ते"          # Devanagari
-    "  leading"      # leading whitespace
-    "trailing  "     # trailing whitespace
-    "  both  "       # both
-    "UPPER lower"
-    "with---many----dashes"
-    "with___underscores"
-    "with/slashes\\and\\backslashes"
-    "with.dot.s"
-    "...punctuation!?"
-    "123 numbers"
-    "——unicode——dashes——"
-    "Mixed 用户 and ascii"
-    "a"               # single char
-    ""                # empty (special case)
-    "      "          # all whitespace
-    "!@#$%^&*()"      # symbols only
-    "🚀🎉"            # emoji-only
+    "用户登录",       # Chinese
+    "ユーザー認証",  # Japanese
+    "Войти",         # Cyrillic
+    "🔐login",       # Emoji
+    "café",          # Latin-1 supplement
+    "αβγδ",           # Greek
+    "नमस्ते",          # Devanagari
+    "  leading",     # leading whitespace
+    "trailing  ",    # trailing whitespace
+    "  both  ",      # both
+    "UPPER lower",
+    "with---many----dashes",
+    "with___underscores",
+    "with/slashes\\and\\backslashes",
+    "with.dot.s",
+    "...punctuation!?",
+    "123 numbers",
+    "——unicode——dashes——",
+    "Mixed 用户 and ascii",
+    "a",               # single char
+    "",                # empty (special case)
+    "      ",          # all whitespace
+    "!@#$%^&*()",      # symbols only
+    "🚀🎉",            # emoji-only
 )
 
 

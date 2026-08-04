@@ -111,6 +111,29 @@ class TestPreCommitHook(unittest.TestCase):
         finally:
             shutil.rmtree(empty, ignore_errors=True)
 
+    def test_hook_warns_on_planning_task(self) -> None:
+        """An active task in 'planning' status should produce a warning (but not block)."""
+        self._install_hook()
+        # Create a task — it auto-becomes current with status 'planning'
+        self.h.run(["task", "create", "Plan-only task", "--slug", "plan-only"])
+        # Make a commit to trigger the hook
+        (self.h.tmpdir / "feature.py").write_text("pass\n")
+        subprocess.run(
+            ["git", "add", "feature.py"],
+            cwd=str(self.h.tmpdir), capture_output=True, text=True,
+        )
+        r = subprocess.run(
+            ["git", "commit", "-m", "add feature"],
+            cwd=str(self.h.tmpdir), capture_output=True, text=True,
+        )
+        # Must NOT block — planning is a warning, not an error
+        self.assertEqual(r.returncode, 0,
+                         f"hook should not block on planning status:\n{r.stdout}\n{r.stderr}")
+        # Must contain the planning warning
+        combined = r.stdout + r.stderr
+        self.assertIn("planning", combined.lower(),
+                      f"expected planning warning in output:\n{combined}")
+
 
 if __name__ == "__main__":
     unittest.main()

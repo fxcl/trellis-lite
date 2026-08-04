@@ -34,6 +34,15 @@ POSIX 建议 1 = 一般错误，2 = 用法错误。但 Trellis Lite 的错误面
 
 这是用户**主动请求修改状态**，但当前状态不允许。区别于 `task list` 这种**被动查询**。
 
+### 为什么 `task finish` 在 `task.json` 损坏时返回 1，而 `task start` / `archive` / `cancel` 返回 0？
+
+这是有意的非对称设计，基于**副作用可逆性**：
+
+- **`task finish`**（严格 return 1）：finish 的核心副作用是 `clear_current_task()`。如果 task.json 损坏却继续清除活跃指针，用户会“丢失任务”且无法恢复。因此 finish 在 `set_status` 失败时**中止整个操作**，活跃指针保持不动，等用户修复后再试。
+- **`task start` / `archive` / `cancel`**（宽松 return 0）：这些命令的副作用（设置 current / 移动目录 / 清理指针）即使 status 字段没更新，也不造成不可逆的数据丢失——用户仍能看到目录、能手动修复 task.json。因此它们打印 Warning 但继续完成文件系统操作，返回 0。
+
+简言之：**不可逆操作失败必须中止（return 1）；可恢复操作失败可以降级继续（return 0 + Warning）**。
+
 ## 在 shell 中使用
 
 ```bash
@@ -91,6 +100,6 @@ python3 .trellis-lite/scripts/trellis.py doctor || {
 | `cmd_context` | 0 | ✓（总是成功，无错误路径） |
 | `cmd_specs` | 0 | ✓ |
 | `cmd_version` | 0 | ✓ |
-| `cmd_doctor` (planned) | 0/1 | ✓ |
+| `cmd_doctor` | 0/1 | ✓ |
 
 未达成一致时，以本表为准修改代码。

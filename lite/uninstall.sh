@@ -55,6 +55,28 @@ if [ -f "$TARGET/.clinerules/trellis-lite.md" ]; then
     fi
 fi
 
+# --- Clean up .gitignore entries added by install.sh ---
+GITIGNORE="${TARGET}/.gitignore"
+if [ -f "$GITIGNORE" ] && grep -q "# Trellis Lite runtime" "$GITIGNORE" 2>/dev/null; then
+    # Remove the marker comment and the runtime file entries that follow it
+    tmpfile=$(mktemp)
+    awk '
+        /^# Trellis Lite runtime$/ { skip=1; next }
+        skip && /^\.trellis-lite\/\./ { next }
+        { skip=0; print }
+    ' "$GITIGNORE" > "$tmpfile" && mv "$tmpfile" "$GITIGNORE"
+    echo "  ✓ .gitignore (removed Trellis Lite runtime entries)"
+    removed=$((removed + 1))
+fi
+
+# --- Remove pre-commit hook (only if it's the Trellis Lite one) ---
+HOOK="${TARGET}/.git/hooks/pre-commit"
+if [ -f "$HOOK" ] && grep -q "Trellis Lite" "$HOOK" 2>/dev/null; then
+    rm -f "$HOOK"
+    echo "  ✓ .git/hooks/pre-commit (Trellis Lite hook)"
+    removed=$((removed + 1))
+fi
+
 echo ""
 echo "✓ Removed $removed item(s) from '$TARGET'"
 echo ""

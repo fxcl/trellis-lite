@@ -103,6 +103,19 @@ class TestTaskLifecycle(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("Invalid task name", r.stdout + r.stderr)
 
+    def test_start_already_in_progress_is_idempotent(self) -> None:
+        """Re-starting an in_progress task must not warn about corruption."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        r = self.h.run(["task", "start", "t"])
+        # Exit 0 — this is a benign no-op, not an error.
+        self.assertEqual(r.returncode, 0)
+        # Must NOT claim the file is corrupted.
+        self.assertNotIn("corrupted", r.stdout)
+        self.assertNotIn("missing", r.stdout)
+        # Should acknowledge the task is already active.
+        self.assertIn("already in_progress", r.stdout)
+
     # ---- finish -----------------------------------------------------------
 
     def test_finish_sets_done_and_clears_current(self) -> None:
