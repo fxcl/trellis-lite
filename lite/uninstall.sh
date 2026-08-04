@@ -43,11 +43,16 @@ for f in AGENTS.md CLAUDE.md; do
     fi
 done
 
-# Cline rules directory
-if [ -d "$TARGET/.clinerules" ]; then
-    rm -rf "$TARGET/.clinerules"
-    echo "  ✓ .clinerules/"
+# Cline rules — remove only the trellis-lite rule, keep other rules
+if [ -f "$TARGET/.clinerules/trellis-lite.md" ]; then
+    rm -f "$TARGET/.clinerules/trellis-lite.md"
+    echo "  ✓ .clinerules/trellis-lite.md"
     removed=$((removed + 1))
+    # Remove the directory only if it's now empty
+    if [ -d "$TARGET/.clinerules" ] && [ -z "$(ls -A "$TARGET/.clinerules")" ]; then
+        rmdir "$TARGET/.clinerules"
+        echo "  ✓ .clinerules/ (empty, removed)"
+    fi
 fi
 
 echo ""

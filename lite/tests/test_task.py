@@ -32,6 +32,7 @@ class TestTaskLifecycle(unittest.TestCase):
 
     def test_create_auto_increments_on_collision(self) -> None:
         self.h.run(["task", "create", "S", "--slug", "dup"])
+        self.h.run(["task", "finish"])
         self.h.run(["task", "create", "S", "--slug", "dup"])
         dup_names = [p.name for p in task_dirs(self.h.tmpdir) if "-dup" in p.name]
         self.assertEqual(len(dup_names), 2, f"expected 2 dup dirs, got {dup_names}")
@@ -62,9 +63,20 @@ class TestTaskLifecycle(unittest.TestCase):
     def test_create_warns_when_active_exists(self) -> None:
         self.h.run(["task", "create", "First", "--slug", "first"])
         r = self.h.run(["task", "create", "Second", "--slug", "second"])
-        self.assertEqual(r.returncode, 0)
-        self.assertIn("Warning", r.stdout)
+        # Refuses (exit 1) by default to enforce "one task at a time".
+        # Use --replace to explicitly take over.
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Refusing", r.stdout)
         self.assertIn("first", r.stdout)
+
+    def test_create_replace_takeover_sets_new_current(self) -> None:
+        self.h.run(["task", "create", "First", "--slug", "first"])
+        r = self.h.run(["task", "create", "Second", "--slug", "second", "--replace"])
+        self.assertEqual(r.returncode, 0)
+        # Active pointer should now point to second, not first
+        ct = self.h.tmpdir / ".trellis-lite/.current-task"
+        self.assertIn("second", ct.read_text())
+        self.assertNotIn("first", ct.read_text())
 
     # ---- start ------------------------------------------------------------
 
@@ -80,7 +92,8 @@ class TestTaskLifecycle(unittest.TestCase):
     def test_start_warns_on_other_in_progress(self) -> None:
         self.h.run(["task", "create", "A", "--slug", "a"])
         self.h.run(["task", "start", "a"])
-        self.h.run(["task", "create", "B", "--slug", "b"])
+        # Take over via --replace to create B while A is still in_progress
+        self.h.run(["task", "create", "B", "--slug", "b", "--replace"])
         r = self.h.run(["task", "start", "b"])
         self.assertIn("Warning", r.stdout)
         self.assertIn("a", r.stdout)
@@ -108,6 +121,31 @@ class TestTaskLifecycle(unittest.TestCase):
         r = self.h.run(["task", "finish"])
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("No active task", r.stdout)
+
+    def test_finish_aborts_on_corrupted_task_json(self) -> None:
+        """F1: corrupted task.json must abort cleanly without clearing the active pointer."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        # Corrupt the task.json by writing garbage
+        d = find_task(self.h.tmpdir, "t")
+        (d / "task.json").write_text("{not valid json", encoding="utf-8")
+        r = self.h.run(["task", "finish"])
+        # Must reject (non-zero) and explicitly mention the corruption
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("corrupted", r.stdout)
+        # CRITICAL: active pointer must NOT have been cleared
+        ct = self.h.tmpdir / ".trellis-lite/.current-task"
+        self.assertTrue(ct.exists(), "finish on corrupted task.json must not clear active pointer")
+        self.assertIn("t", ct.read_text())
+
+    def test_finish_handles_missing_task_json(self) -> None:
+        """F1 variant: missing task.json must also abort cleanly."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        d = find_task(self.h.tmpdir, "t")
+        (d / "task.json").unlink()
+        r = self.h.run(["task", "finish"])
+        self.assertNotEqual(r.returncode, 0)
+        ct = self.h.tmpdir / ".trellis-lite/.current-task"
+        self.assertTrue(ct.exists(), "finish on missing task.json must not clear active pointer")
 
     # ---- archive ----------------------------------------------------------
 

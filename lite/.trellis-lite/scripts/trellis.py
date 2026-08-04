@@ -48,6 +48,21 @@ JOURNAL_PREFIX = "journal-"
 # files small and to limit AI context-window consumption per read.
 MAX_JOURNAL_LINES = 2000
 
+# Task status state machine. Centralized so adding a new status (e.g. "paused")
+# only requires updating this constant + the ALLOWED_TRANSITIONS map below.
+# All writes to data["status"] must go through set_status() so transitions
+# stay consistent.
+STATUSES: frozenset[str] = frozenset({"planning", "in_progress", "done", "archived", "cancelled"})
+# Forward-only transitions (no rollback). `cancelled` and `archived` are
+# terminal (no further transitions). `done` can only go to `archived`.
+ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
+    "planning":    frozenset({"in_progress", "done", "archived", "cancelled"}),
+    "in_progress": frozenset({"done", "archived", "cancelled"}),
+    "done":        frozenset({"archived"}),
+    "archived":    frozenset(),  # terminal
+    "cancelled":   frozenset(),  # terminal
+}
+
 # Version is the single source of truth for `version` output and diagnostics.
 # Keep it in sync with lite/README.md and any release tag.
 __version__ = "0.6.9"
@@ -63,6 +78,26 @@ C_DIM = "\033[2m"
 
 def colored(text: str, color: str) -> str:
     return f"{color}{text}{C_RESET}"
+
+
+# Single source of truth for `Usage: ...` error lines. Every command that prints
+# Usage routes through usage_for() so the prefix, color, and quote style stay
+# consistent. To add a new command: add an entry here + use usage_for(<key>).
+USAGE: dict[str, str] = {
+    "init":         "trellis.py init <your-name>",
+    "task":         "trellis.py task <create|start|current|finish|archive|cancel|list|delete>",
+    "task create":  'trellis.py task create "<title>" [--slug <name>] [--replace]',
+    "task start":   "trellis.py task start <name>",
+    "task archive": "trellis.py task archive <name>",
+    "task cancel":  "trellis.py task cancel <name>",
+    "task delete":  "trellis.py task delete <name> [--force]",
+    "session":      'trellis.py session --title "Title" --summary "Summary"',
+}
+
+
+def usage_for(key: str) -> None:
+    """Print a red 'Usage: ...' line. KeyError if key is missing (caller bug)."""
+    print(colored(f"Usage: {USAGE[key]}", C_RED))
 
 
 # ============================================================================
@@ -217,6 +252,69 @@ def clear_current_task() -> None:
         ct_file.unlink()
 
 
+def set_status(task_dir: Path, new_status: str, *, when: str | None = None) -> bool:
+    """Set task.json status with optional timestamp. Returns True on success.
+
+    Strict: rejects on unknown status, missing file, or corrupted JSON.
+    Callers that want to abort a state-mutating command on failure should
+    check the return value and exit non-zero.
+
+    The `when` argument names the timestamp field (e.g. "started", "finished",
+    "archived", "cancelled"); omit it for transitions that don't need a stamp.
+    """
+    if new_status not in STATUSES:
+        raise ValueError(f"invalid status: {new_status!r}")
+    task_json_path = task_dir / FILE_TASK_JSON
+    if not task_json_path.is_file():
+        return False
+    try:
+        data = json.loads(task_json_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    if not isinstance(data, dict) or not data:
+        return False
+    data["status"] = new_status
+    if when:
+        data[when] = datetime.now().isoformat()
+    write_json(task_json_path, data)
+    return True
+
+
+def list_journals(workspace: Path) -> list[tuple[int, Path]]:
+    """Return [(number, path), ...] sorted by number for all journal files.
+
+    Skips files that don't match `journal-N.md` (e.g. partial deletes, manual
+    files). Returns [] if workspace is not a directory.
+    """
+    if not workspace.is_dir():
+        return []
+    journals: list[tuple[int, Path]] = []
+    for j in workspace.glob(f"{JOURNAL_PREFIX}*.md"):
+        m = re.match(rf"{JOURNAL_PREFIX}(\d+)\.md$", j.name)
+        if m:
+            journals.append((int(m.group(1)), j))
+    journals.sort()
+    return journals
+
+
+def rotate_if_full(workspace: Path, journals: list[tuple[int, Path]]) -> Path:
+    """Return the journal path to write to next, creating a new one if needed.
+
+    If no journals exist, creates `journal-1.md`. If the latest journal is
+    at or above MAX_JOURNAL_LINES lines, creates the next numbered file.
+    """
+    if not journals:
+        journal = workspace / f"{JOURNAL_PREFIX}1.md"
+        journal.write_text("# Journal 1\n\n", encoding="utf-8")
+        return journal
+    max_num, journal = journals[-1]
+    if len(journal.read_text(encoding="utf-8").splitlines()) >= MAX_JOURNAL_LINES:
+        num = max_num + 1
+        journal = workspace / f"{JOURNAL_PREFIX}{num}.md"
+        journal.write_text(f"# Journal {num}\n\n", encoding="utf-8")
+    return journal
+
+
 def resolve_task_dir(task_input: str) -> Path | None:
     """Resolve task name to absolute directory path."""
     # Reject path separators and traversal (e.g. "../spec")
@@ -256,7 +354,7 @@ def resolve_task_dir(task_input: str) -> Path | None:
 def cmd_init(args: list[str]) -> int:
     """Initialize developer identity + scaffold .trellis-lite/ at repo root."""
     if not args:
-        print(colored("Usage: trellis.py init <your-name>", C_RED))
+        usage_for("init")
         return 1
 
     name = args[0]
@@ -313,7 +411,7 @@ def cmd_init(args: list[str]) -> int:
 def cmd_task(args: list[str]) -> int:
     """Dispatch to a task subcommand (create/start/current/finish/archive/cancel/list/delete)."""
     if not args:
-        print(colored("Usage: trellis.py task <create|start|current|finish|archive|cancel|list|delete>", C_RED))
+        usage_for("task")
         return 1
 
     sub = args[0]
@@ -341,19 +439,27 @@ def cmd_task(args: list[str]) -> int:
 
 
 def _task_create(args: list[str]) -> int:
-    """Create a new task directory with prd.md, set as current, warn if active exists."""
+    """Create a new task directory with prd.md, set as current.
+
+    By default refuses to create if another task is active (the "one task at a time"
+    rule). Pass --replace to take over an existing active task.
+    """
     if not args:
-        print(colored('Usage: trellis.py task create "<title>" [--slug <name>]', C_RED))
+        usage_for("task create")
         return 1
 
-    # Parse: title + optional --slug
+    # Parse: title + optional --slug + optional --replace
     slug = None
+    replace = False
     title_parts = []
     i = 0
     while i < len(args):
         if args[i] == "--slug" and i + 1 < len(args):
             slug = args[i + 1]
             i += 2
+        elif args[i] == "--replace":
+            replace = True
+            i += 1
         else:
             title_parts.append(args[i])
             i += 1
@@ -365,6 +471,18 @@ def _task_create(args: list[str]) -> int:
         title = title[1:-1]
     if not title:
         print(colored("Error: title cannot be empty", C_RED))
+        return 1
+
+    # Check for existing active task BEFORE any disk mutation.
+    # This is the "one task at a time" rule (see docs/best-practices.md §7).
+    existing = get_current_task()
+    if existing and not replace:
+        print(colored(
+            f"Refusing to create: '{existing}' is still the active task. "
+            f"Run 'task finish' or 'task cancel' first, "
+            f"or pass --replace to take over.",
+            C_RED,
+        ))
         return 1
 
     slug = slugify(slug) if slug else slugify(title)
@@ -410,10 +528,11 @@ def _task_create(args: list[str]) -> int:
 """
     (task_dir / "prd.md").write_text(prd_content, encoding="utf-8")
 
-    # Warn if another task is already active (one task at a time)
-    existing = get_current_task()
-    if existing:
-        print(colored(f"Warning: '{existing}' is still the current task — one task at a time", C_YELLOW))
+    if existing and replace:
+        print(colored(
+            f"Note: replaced active task '{existing}' with '{dir_name}'.",
+            C_YELLOW,
+        ))
 
     # Auto-set as current task
     rel = f"{TRELLIS_DIR}/{DIR_TASKS}/{dir_name}"
@@ -429,7 +548,7 @@ def _task_create(args: list[str]) -> int:
 def _task_start(args: list[str]) -> int:
     """Mark a task in_progress, set as current, warn if another task is in progress."""
     if not args:
-        print(colored("Usage: trellis.py task start <name>", C_RED))
+        usage_for("task start")
         return 1
 
     task_dir = resolve_task_dir(args[0])
@@ -446,14 +565,13 @@ def _task_start(args: list[str]) -> int:
             if read_json(t / FILE_TASK_JSON).get("status") == "in_progress":
                 print(colored(f"Warning: '{t.name}' is still in_progress — one task at a time", C_YELLOW))
 
-    # Update status
-    task_json_path = task_dir / FILE_TASK_JSON
-    data = read_json(task_json_path)
-    if not data:
-        print(colored(f"Warning: {task_json_path.name} missing or corrupted", C_YELLOW))
-    data["status"] = "in_progress"
-    data["started"] = datetime.now().isoformat()
-    write_json(task_json_path, data)
+    # Update status via the central state-machine helper
+    if not set_status(task_dir, "in_progress", when="started"):
+        print(colored(
+            f"Warning: {task_dir.name}/task.json missing or corrupted; "
+            f"status not updated. Run 'trellis.py doctor --fix' to repair.",
+            C_YELLOW,
+        ))
 
     # Set as current
     rel = f"{TRELLIS_DIR}/{DIR_TASKS}/{task_dir.name}"
@@ -503,14 +621,17 @@ def _task_finish(args: list[str]) -> int:
     if dirty:
         print(colored(f"Warning: {len(dirty.splitlines())} uncommitted change(s) in working tree", C_YELLOW))
 
-    # Update task status to done
+    # Update task status via the central state-machine helper.
+    # This refuses cleanly on missing/corrupted task.json so the active pointer
+    # is never cleared on a downstream exception.
     task_dir = get_repo_root() / current
-    task_json_path = task_dir / FILE_TASK_JSON
-    data = read_json(task_json_path)
-    if data:
-        data["status"] = "done"
-        data["finished"] = datetime.now().isoformat()
-        write_json(task_json_path, data)
+    if not set_status(task_dir, "done", when="finished"):
+        print(colored(
+            f"Error: task.json is missing or corrupted; refusing to finish. "
+            f"Run 'trellis.py doctor --fix' to repair.",
+            C_RED,
+        ))
+        return 1
 
     clear_current_task()
     print(colored(f"✓ Task finished: {current}", C_GREEN))
@@ -521,7 +642,7 @@ def _task_finish(args: list[str]) -> int:
 def _task_archive(args: list[str]) -> int:
     """Move a task to tasks/archive/YYYY-MM/, with auto-increment on collision."""
     if not args:
-        print(colored("Usage: trellis.py task archive <name>", C_RED))
+        usage_for("task archive")
         return 1
 
     task_dir = resolve_task_dir(args[0])
@@ -529,14 +650,13 @@ def _task_archive(args: list[str]) -> int:
         print(colored(f"Task not found: {args[0]}", C_RED))
         return 1
 
-    # Update status
-    task_json_path = task_dir / FILE_TASK_JSON
-    data = read_json(task_json_path)
-    if not data:
-        print(colored(f"Warning: {task_json_path.name} missing or corrupted", C_YELLOW))
-    data["status"] = "archived"
-    data["archived"] = datetime.now().isoformat()
-    write_json(task_json_path, data)
+    # Update status via the central state-machine helper
+    if not set_status(task_dir, "archived", when="archived"):
+        print(colored(
+            f"Warning: {task_dir.name}/task.json missing or corrupted; "
+            f"archiving the directory but status field left unset.",
+            C_YELLOW,
+        ))
 
     # Move to archive
     archive_dir = get_tasks_dir() / DIR_ARCHIVE
@@ -566,7 +686,7 @@ def _task_archive(args: list[str]) -> int:
 def _task_cancel(args: list[str]) -> int:
     """Mark a task cancelled in place; directory is kept for history."""
     if not args:
-        print(colored("Usage: trellis.py task cancel <name>", C_RED))
+        usage_for("task cancel")
         return 1
 
     task_dir = resolve_task_dir(args[0])
@@ -574,14 +694,13 @@ def _task_cancel(args: list[str]) -> int:
         print(colored(f"Task not found: {args[0]}", C_RED))
         return 1
 
-    # Update status
-    task_json_path = task_dir / FILE_TASK_JSON
-    data = read_json(task_json_path)
-    if not data:
-        print(colored(f"Warning: {task_json_path.name} missing or corrupted", C_YELLOW))
-    data["status"] = "cancelled"
-    data["cancelled"] = datetime.now().isoformat()
-    write_json(task_json_path, data)
+    # Update status via the central state-machine helper
+    if not set_status(task_dir, "cancelled", when="cancelled"):
+        print(colored(
+            f"Warning: {task_dir.name}/task.json missing or corrupted; "
+            f"status not updated. Run 'trellis.py doctor --fix' to repair.",
+            C_YELLOW,
+        ))
 
     # Clear current if it was this task
     current = get_current_task()
@@ -637,7 +756,7 @@ def _task_list(args: list[str]) -> int:
 def _task_delete(args: list[str]) -> int:
     """Permanently delete a task directory. Defaults to cancelled-only; pass --force for any status."""
     if not args:
-        print(colored("Usage: trellis.py task delete <name> [--force]", C_RED))
+        usage_for("task delete")
         return 1
 
     # Parse --force flag
@@ -649,7 +768,7 @@ def _task_delete(args: list[str]) -> int:
         else:
             name_args.append(a)
     if not name_args:
-        print(colored("Usage: trellis.py task delete <name> [--force]", C_RED))
+        usage_for("task delete")
         return 1
 
     task_dir = resolve_task_dir(name_args[0])
@@ -703,13 +822,18 @@ def cmd_session(args: list[str]) -> int:
             i += 1
 
     if not title:
-        print(colored("Usage: trellis.py session --title \"Title\" --summary \"Summary\"", C_RED))
+        usage_for("session")
         return 1
 
-    # Validate commit hash format (warn rather than reject — typo only affects journal display)
+    # Validate commit hash format. Reject (exit 1) — a typo here would silently
+    # produce a journal entry with a bogus hash that misleads future readers.
     if commit and not re.match(r"^[0-9a-f]{4,40}$", commit):
-        print(colored(f"Warning: '{commit}' doesn't look like a git SHA (4-40 hex chars)", C_YELLOW))
-        commit = None
+        print(colored(
+            f"Error: '{commit}' doesn't look like a git SHA (4-40 hex chars). "
+            f"Refusing to record a session with a bogus commit hash.",
+            C_RED,
+        ))
+        return 1
 
     workspace = get_workspace_dir()
     if workspace is None:
@@ -717,24 +841,8 @@ def cmd_session(args: list[str]) -> int:
         return 1
 
     # Find or create active journal (parse numbers so rotation is safe after manual deletions)
-    journals: list[tuple[int, Path]] = []
-    for j in workspace.glob(f"{JOURNAL_PREFIX}*.md"):
-        m = re.match(rf"{JOURNAL_PREFIX}(\d+)\.md$", j.name)
-        if m:
-            journals.append((int(m.group(1)), j))
-    journals.sort()
-
-    if not journals:
-        journal = workspace / f"{JOURNAL_PREFIX}1.md"
-        journal.write_text("# Journal 1\n\n", encoding="utf-8")
-    else:
-        max_num, journal = journals[-1]
-        # Check line count, rotate if needed
-        lines = journal.read_text(encoding="utf-8").splitlines()
-        if len(lines) >= MAX_JOURNAL_LINES:
-            num = max_num + 1
-            journal = workspace / f"{JOURNAL_PREFIX}{num}.md"
-            journal.write_text(f"# Journal {num}\n\n", encoding="utf-8")
+    journals = list_journals(workspace)
+    journal = rotate_if_full(workspace, journals)
 
     # Append session entry
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -831,13 +939,8 @@ def cmd_context(args: list[str]) -> int:
     # Latest journal entry (helps resume across sessions)
     workspace = get_workspace_dir()
     if workspace and workspace.is_dir():
-        journals: list[tuple[int, Path]] = []
-        for j in workspace.glob(f"{JOURNAL_PREFIX}*.md"):
-            m = re.match(rf"{JOURNAL_PREFIX}(\d+)\.md$", j.name)
-            if m:
-                journals.append((int(m.group(1)), j))
+        journals = list_journals(workspace)
         if journals:
-            journals.sort()
             last_journal = journals[-1][1]
             content = last_journal.read_text(encoding="utf-8")
             titles = re.findall(r"^## (.+)$", content, re.MULTILINE)
@@ -932,7 +1035,13 @@ def cmd_version(args: list[str]) -> int:
 
 
 def cmd_doctor(args: list[str]) -> int:
-    """Diagnose Trellis Lite state. Pass --fix to repair common issues."""
+    """Diagnose Trellis Lite state. Pass --fix to repair common issues.
+
+    Each numbered check is its own `_check_*()` helper below. The orchestrator
+    chains them and forwards mutations on `problems`/`warnings` to the final
+    summary. Splitting per-check makes it easy to add/remove/reorder a check
+    and to test one in isolation later.
+    """
     fix = "--fix" in args
     problems: list[str] = []
     warnings: list[str] = []
@@ -942,20 +1051,57 @@ def cmd_doctor(args: list[str]) -> int:
         print(colored("  --fix mode: will repair what it can", C_YELLOW))
     print()
 
-    # 1. Is .trellis-lite/ present?
+    # 1. .trellis-lite/ present (early-abort if not)
     try:
-        tdir = get_repo_root(init_ok=True) / TRELLIS_DIR
+        repo_root = get_repo_root(init_ok=True)
+        tdir = repo_root / TRELLIS_DIR
     except Exception:
         problems.append("Could not determine repo root")
         return _doctor_finish(problems, warnings)
 
+    if not _check_trellis_present(tdir, problems):
+        return _doctor_finish(problems, warnings)
+
+    # 2. Developer file
+    _check_developer_file(tdir, fix, problems, warnings)
+
+    # 3. Required subdirs
+    _check_required_subdirs(tdir, fix, warnings)
+
+    # 4. Workspace (returns (workspace, dev) for downstream checks)
+    workspace, _dev = _check_workspace_dir(fix, warnings)
+
+    # 5. .current-task pointer
+    _check_current_task(tdir, fix, problems)
+
+    # 6. Task integrity
+    _check_task_integrity(tdir, problems)
+
+    # 7. Journal numbering (only meaningful when workspace exists)
+    if workspace is not None:
+        _check_journal_numbering(workspace, warnings)
+
+    # 8. Python version
+    _check_python_version(problems)
+
+    # 9. Working tree state (informational)
+    _check_working_tree()
+
+    return _doctor_finish(problems, warnings)
+
+
+def _check_trellis_present(tdir: Path, problems: list[str]) -> bool:
+    """Check #1: is .trellis-lite/ present? Returns False to abort doctor early."""
     if not tdir.is_dir():
         print(colored("  ✗", C_RED), f"{TRELLIS_DIR}/ not found")
         problems.append(f"{TRELLIS_DIR}/ missing — run 'init <name>' first")
-        return _doctor_finish(problems, warnings)
+        return False
     print(colored("  ✓", C_GREEN), f"{TRELLIS_DIR}/ present at {tdir}")
+    return True
 
-    # 2. Developer file
+
+def _check_developer_file(tdir: Path, fix: bool, problems: list[str], warnings: list[str]) -> None:
+    """Check #2: .developer must exist and contain name=..."""
     dev_file = tdir / FILE_DEVELOPER
     if not dev_file.is_file():
         problems.append(f"{FILE_DEVELOPER} missing")
@@ -964,15 +1110,17 @@ def cmd_doctor(args: list[str]) -> int:
             dev_file.write_text("name=developer\n", encoding="utf-8")
             problems.pop()
             print(colored("    ↳", C_DIM), "wrote default developer=developer")
+        return
+    dev = get_developer()
+    if dev:
+        print(colored("  ✓", C_GREEN), f"Developer: {dev}")
     else:
-        dev = get_developer()
-        if dev:
-            print(colored("  ✓", C_GREEN), f"Developer: {dev}")
-        else:
-            warnings.append(f"{FILE_DEVELOPER} exists but has no name= line")
-            print(colored("  ⚠", C_YELLOW), f"{FILE_DEVELOPER} has no name= line")
+        warnings.append(f"{FILE_DEVELOPER} exists but has no name= line")
+        print(colored("  ⚠", C_YELLOW), f"{FILE_DEVELOPER} has no name= line")
 
-    # 3. Required subdirectories
+
+def _check_required_subdirs(tdir: Path, fix: bool, warnings: list[str]) -> None:
+    """Check #3: tasks/, tasks/archive/, spec/ must exist."""
     for sub in [(DIR_TASKS,), (DIR_TASKS, DIR_ARCHIVE), (DIR_SPEC,)]:
         d = tdir.joinpath(*sub)
         if not d.is_dir():
@@ -984,20 +1132,24 @@ def cmd_doctor(args: list[str]) -> int:
         else:
             print(colored("  ✓", C_GREEN), f"{'/'.join(sub)}/ present")
 
-    # 4. Workspace
+
+def _check_workspace_dir(fix: bool, warnings: list[str]) -> tuple[Path | None, str | None]:
+    """Check #4: workspace/<dev>/ exists; auto-create journal-1.md if missing."""
     workspace = get_workspace_dir()
+    dev = get_developer()
     if workspace is None:
         warnings.append("workspace/ not present (no developer or developer dir missing)")
         print(colored("  ⚠", C_YELLOW), "workspace/ missing")
-    elif not workspace.is_dir():
+        return None, None
+    if not workspace.is_dir():
         warnings.append(f"workspace/{dev} missing")
         print(colored("  ⚠", C_YELLOW), f"workspace/{dev} missing")
         if fix:
             workspace.mkdir(parents=True, exist_ok=True)
             print(colored("    ↳", C_DIM), f"created {workspace}")
-    else:
-        # Check journal exists
-        journals = sorted(workspace.glob(f"{JOURNAL_PREFIX}*.md"))
+    # Check journal exists (only meaningful now that workspace may have been created)
+    if workspace.is_dir():
+        journals = list_journals(workspace)
         if not journals:
             warnings.append("no journal files")
             print(colored("  ⚠", C_YELLOW), "no journal files")
@@ -1008,63 +1160,69 @@ def cmd_doctor(args: list[str]) -> int:
                 print(colored("    ↳", C_DIM), "created journal-1.md")
         else:
             print(colored("  ✓", C_GREEN), f"workspace/{dev}/ has {len(journals)} journal(s)")
+    return workspace, dev
 
-    # 5. .current-task pointer
+
+def _check_current_task(tdir: Path, fix: bool, problems: list[str]) -> None:
+    """Check #5: .current-task pointer must resolve to a real task dir."""
     current = get_current_task()
-    if current:
-        ct_path = tdir.parent / current
-        if not ct_path.is_dir():
-            problems.append(f".current-task points to missing dir: {current}")
-            print(colored("  ✗", C_RED), f".current-task points to missing: {current}")
-            if fix:
-                clear_current_task()
-                # After successful repair, drop the problem from the list
-                # so the final summary doesn't report a fixed issue.
-                problems.pop()
-                print(colored("    ↳", C_DIM), "cleared stale .current-task pointer")
-        else:
-            data = read_json(ct_path / FILE_TASK_JSON)
-            status = data.get("status", "?")
-            print(colored("  ✓", C_GREEN), f"Active task: {ct_path.name} ({status})")
-    else:
+    if not current:
         print(colored("  ·", C_DIM), "No active task (informational)")
+        return
+    ct_path = tdir.parent / current
+    if not ct_path.is_dir():
+        problems.append(f".current-task points to missing dir: {current}")
+        print(colored("  ✗", C_RED), f".current-task points to missing: {current}")
+        if fix:
+            clear_current_task()
+            # After successful repair, drop the problem from the list so the
+            # final summary doesn't report a fixed issue.
+            problems.pop()
+            print(colored("    ↳", C_DIM), "cleared stale .current-task pointer")
+        return
+    data = read_json(ct_path / FILE_TASK_JSON)
+    status = data.get("status", "?")
+    print(colored("  ✓", C_GREEN), f"Active task: {ct_path.name} ({status})")
 
-    # 6. Task integrity: every task dir must have task.json
+
+def _check_task_integrity(tdir: Path, problems: list[str]) -> None:
+    """Check #6: every task dir under tasks/ must have task.json."""
     tasks_dir = tdir / DIR_TASKS
-    if tasks_dir.is_dir():
-        for t in tasks_dir.iterdir():
-            if not t.is_dir() or t.name == DIR_ARCHIVE:
-                continue
-            if not (t / FILE_TASK_JSON).is_file():
-                problems.append(f"orphan task dir (no {FILE_TASK_JSON}): {t.name}")
-                print(colored("  ✗", C_RED), f"orphan: {t.name} (no task.json)")
+    if not tasks_dir.is_dir():
+        return
+    for t in tasks_dir.iterdir():
+        if not t.is_dir() or t.name == DIR_ARCHIVE:
+            continue
+        if not (t / FILE_TASK_JSON).is_file():
+            problems.append(f"orphan task dir (no {FILE_TASK_JSON}): {t.name}")
+            print(colored("  ✗", C_RED), f"orphan: {t.name} (no task.json)")
 
-        # 7. Journal number gaps
-        if workspace and workspace.is_dir():
-            nums = []
-            for j in workspace.glob(f"{JOURNAL_PREFIX}*.md"):
-                m = re.match(rf"{JOURNAL_PREFIX}(\d+)\.md$", j.name)
-                if m:
-                    nums.append(int(m.group(1)))
-            if nums:
-                nums.sort()
-                if nums[0] != 1:
-                    warnings.append(f"journal numbering starts at {nums[0]} (expected 1)")
-                    print(colored("  ⚠", C_YELLOW), f"journals start at {nums[0]} (gaps before)")
 
-    # 8. Python version
+def _check_journal_numbering(workspace: Path, warnings: list[str]) -> None:
+    """Check #7: journal-N.md numbering should start at 1 (gaps are warnings)."""
+    journals = list_journals(workspace)
+    if not journals:
+        return
+    nums = [n for n, _ in journals]
+    if nums[0] != 1:
+        warnings.append(f"journal numbering starts at {nums[0]} (expected 1)")
+        print(colored("  ⚠", C_YELLOW), f"journals start at {nums[0]} (gaps before)")
+
+
+def _check_python_version(problems: list[str]) -> None:
+    """Check #8: Python 3.9+ required."""
     if sys.version_info < (3, 9):
         problems.append(f"Python {sys.version_info[0]}.{sys.version_info[1]} is below 3.9")
         print(colored("  ✗", C_RED), f"Python {sys.version_info[0]}.{sys.version_info[1]} < 3.9")
     else:
         print(colored("  ✓", C_GREEN), f"Python {sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")
 
-    # 9. Working tree state (informational)
+
+def _check_working_tree() -> None:
+    """Check #9: working tree dirty file count (informational only)."""
     dirty = git_status_porcelain()
     if dirty:
         print(colored("  ·", C_DIM), f"{len(dirty.splitlines())} dirty file(s) in working tree (informational)")
-
-    return _doctor_finish(problems, warnings)
 
 
 def _doctor_finish(problems: list[str], warnings: list[str]) -> int:

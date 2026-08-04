@@ -9,10 +9,28 @@
 
 ---
 
+## [Unreleased] - 2026-07-26
+
+### ⚠ 破坏性变更
+- **`task create` 已有活跃任务时拒绝（返回 1）**：之前是"警告 + 继续并替换活跃指针"，用户容易"丢了任务"。新行为遵循"one task at a time"硬规则 —
+  - 默认：拒绝 + exit 1 + 文件夹**不创建**
+  - 显式接管：传 `--replace` 强制接管
+- **现存 `task create` 调用**：如果依赖"警告后继续创建"，需先 `task finish` / `task cancel` 旧任务，或在 create 命令加 `--replace`。
+
+### 修复
+- **`task finish` 在 `task.json` 损坏或缺失时不再悄悄崩溃 + 误清活跃指针**：之前如果 `task.json` 损坏，`read_json` 返 `{}` 后 `data["status"] = "done"` 触发 `AttributeError`，但 `clear_current_task()` 仍然执行 → 任务被默默"吃掉"。新行为：严格解析 + 缺失/损坏/空数据均拒绝 + 显式提示 `trellis.py doctor --fix` 修复，活跃指针保留。
+- **`session --commit` 不合法格式改为拒绝（exit 1）**：之前是 warn + 静默丢弃 commit 字段（journal 正常写入），新行为：识别为拼写错误会污染未来的 journal 检索，因此拒绝整个 session 写入 + exit 1。
+
+### 文档
+- README.md / usage-guide.md / design.md / best-practices.md 同步：测试数量 41 → 74；行数 906 → 1100+；子命令清单加 `task delete` / `version` / `doctor` / `task list --all`。
+- 运行测试命令修正：之前 `python3 -m unittest discover -s lite/tests -t .` 在 Python 3.9+ 相对 import 失败；改为 `python3 -m unittest tests.test_*`。
+
+---
+
 ## [0.6.9] - 2026-07-26
 
 ### 新增
-- **`task delete <name>`** 子命令，删除单个任务（仅允许 `cancelled`/`archived` 状态；用 `--force` 跳过状态校验）（`4c777e6`）
+- **`task delete <name>`** 子命令，永久删除任务目录（仅允许 `cancelled` 状态；用 `--force` 跳过状态校验）（`4c777e6`）
 - **`version`** 子命令，打印 `trellis-lite 0.6.9`；`__version__` 作为唯一真实来源（`689a660`）
 - **`doctor [--fix]`** 诊断命令，自检 9 项（`.trellis-lite/` 存在、`.developer`、子目录、workspace、`.current-task`、任务完整性、journal 编号、Python 版本、git 脏文件）；`--fix` 自动修复大部分问题（`当前提交`）
 - **`lite/hooks/pre-commit`** Git pre-commit hook：commit 前跑 `doctor` + 提醒 planning 状态任务；`install.sh` 在 `.git/` 存在时自动安装（`当前提交`）
@@ -94,5 +112,6 @@ git log <last-tag>..HEAD --pretty=format:"%s" | grep -E "^(feat|fix|docs|chore|t
 
 ---
 
+[Unreleased]: #unreleased---2026-07-26
 [0.6.9]: #069---2026-07-26
 [0.6.0]: #060---2026-07-12

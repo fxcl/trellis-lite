@@ -80,6 +80,26 @@ echo -e "Developer: ${DEV_NAME}"
 echo -e "Platforms: ${PLATFORMS}"
 echo ""
 
+# --- Validate platforms ---
+
+VALID_PLATFORMS=("qoder" "claude" "opencode" "cline" "all")
+if [ "$PLATFORMS" != "all" ]; then
+    IFS=',' read -ra REQUESTED <<< "$PLATFORMS"
+    for p in "${REQUESTED[@]}"; do
+        found=0
+        for v in "${VALID_PLATFORMS[@]}"; do
+            if [ "$p" = "$v" ]; then
+                found=1
+                break
+            fi
+        done
+        if [ "$found" -eq 0 ]; then
+            echo -e "${RED}Error: unknown platform '$p'. Valid: ${VALID_PLATFORMS[*]}${NC}" >&2
+            exit 1
+        fi
+    done
+fi
+
 # --- Helper: check if platform is selected ---
 
 has_platform() {

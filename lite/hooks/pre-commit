@@ -39,15 +39,18 @@ fi
 echo "Trellis Lite pre-commit checks..."
 
 # Check 1: doctor must pass (warnings are OK, problems block the commit)
-if ! python3 "$SCRIPT" doctor > /tmp/trellis-doctor-output.txt 2>&1; then
+DOCTOR_OUTPUT="$(mktemp)"
+if ! python3 "$SCRIPT" doctor > "$DOCTOR_OUTPUT" 2>&1; then
     echo ""
     echo "✗ Trellis Lite doctor found problems:"
-    cat /tmp/trellis-doctor-output.txt
+    cat "$DOCTOR_OUTPUT"
     echo ""
     echo "Fix the issues above, or use 'git commit --no-verify' to bypass."
     echo "Tip: run '$SCRIPT doctor --fix' to auto-repair common issues."
+    rm -f "$DOCTOR_OUTPUT"
     exit 1
 fi
+rm -f "$DOCTOR_OUTPUT"
 
 # Check 2: if a task is active and in planning status, warn (don't block)
 ACTIVE_LINE=$(python3 "$SCRIPT" context 2>/dev/null | grep -E "^\s+Active task:" || true)

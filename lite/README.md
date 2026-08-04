@@ -12,7 +12,7 @@ Trellis Lite 保留核心价值，砍掉所有非必要复杂度：
 
 | 原版 Trellis | Trellis Lite |
 |---|---|
-| 20+ Python 脚本 | **1 个**单文件脚本（~906 行） |
+| 20+ Python 脚本 | **1 个**单文件脚本（~1168 行） |
 | 4 阶段工作流 | **3 阶段**（PLAN → CODE → WRAP） |
 | 20+ 平台适配 | **4 个**（Qoder、Claude Code、OpenCode、Cline）+ AGENTS.md 通用入口 |
 | Channel 多 agent 协作 | 移除 |
@@ -90,12 +90,14 @@ your-project/
 python3 .trellis-lite/scripts/trellis.py init <name>
 
 # 任务管理
-python3 .trellis-lite/scripts/trellis.py task create "<title>" [--slug <name>]
+python3 .trellis-lite/scripts/trellis.py task create "<title>" [--slug <name>] [--replace]
 python3 .trellis-lite/scripts/trellis.py task start <name>
 python3 .trellis-lite/scripts/trellis.py task current
 python3 .trellis-lite/scripts/trellis.py task finish
 python3 .trellis-lite/scripts/trellis.py task archive <name>
-python3 .trellis-lite/scripts/trellis.py task list
+python3 .trellis-lite/scripts/trellis.py task cancel <name>
+python3 .trellis-lite/scripts/trellis.py task list [--all]
+python3 .trellis-lite/scripts/trellis.py task delete <name> [--force]
 
 # 会话记录
 python3 .trellis-lite/scripts/trellis.py session --title "..." --summary "..." [--commit <hash>]
@@ -103,6 +105,11 @@ python3 .trellis-lite/scripts/trellis.py session --title "..." --summary "..." [
 # AI 上下文（AI 自动调用）
 python3 .trellis-lite/scripts/trellis.py context
 python3 .trellis-lite/scripts/trellis.py specs
+
+# 诊断与元信息
+python3 .trellis-lite/scripts/trellis.py doctor [--fix]
+python3 .trellis-lite/scripts/trellis.py version
+python3 .trellis-lite/scripts/trellis.py help
 ```
 
 ## 工作流（3 阶段）
@@ -119,14 +126,16 @@ PLAN ────────────────► CODE ──────
 
 ## 运行测试
 
-Trellis Lite 自带 41 个 unittest 覆盖全部命令（init / task / session / context / specs / install）。零依赖、仅需 Python 3.9+。
+Trellis Lite 自带 104 个 unittest 覆盖全部命令（init / task / session / context / specs / install / doctor / pre-commit hook / status machine / usage consistency）。零依赖、仅需 Python 3.9+。
 
 ```bash
-# 从仓库根运行
-python3 -m unittest discover -s lite/tests -t .
+# 从仓库根运行（注意：Python 3.9+ 需要 `tests.` 包前缀，相对 import 才能工作）
+python3 -m unittest tests.test_init tests.test_task tests.test_session \
+                  tests.test_doctor tests.test_precommit tests.test_install \
+                  tests.test_slugify_fuzz tests.test_context_specs_help
 
 # 或运行某个模块
-python3 -m unittest lite.tests.test_task -v
+python3 -m unittest tests.test_task -v
 ```
 
 CI：`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上跑 py_compile + install.sh + uninstall.sh 烟测 + unittest，每次改动都会触发。

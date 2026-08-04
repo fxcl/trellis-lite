@@ -30,13 +30,24 @@ class TestSession(unittest.TestCase):
         j = self.h.tmpdir / ".trellis-lite/workspace/tester/journal-1.md"
         self.assertIn("abc1234", j.read_text())
 
-    def test_session_warns_on_bad_commit_and_drops(self) -> None:
+    def test_session_rejects_bad_commit(self) -> None:
+        """Bad commit format → exit 1, no journal entry written."""
         r = self.h.run(["session", "--title", "T", "--commit", "BAD!"])
-        self.assertEqual(r.returncode, 0)
-        self.assertIn("Warning", r.stdout)
-        # Bad commit should NOT appear in journal
+        self.assertNotEqual(r.returncode, 0, f"should exit non-zero on bad commit\n{r.stdout}")
+        self.assertIn("Error", r.stdout)
+        self.assertIn("git SHA", r.stdout)
+        # Bad commit should NOT appear in journal (session must not be recorded)
         j = self.h.tmpdir / ".trellis-lite/workspace/tester/journal-1.md"
-        self.assertNotIn("BAD!", j.read_text())
+        if j.exists():
+            self.assertNotIn("BAD!", j.read_text())
+            self.assertNotIn("T\n", j.read_text())
+
+    def test_session_accepts_various_valid_shas(self) -> None:
+        """4-char short SHA through 40-char full SHA are all valid."""
+        for sha in ("abcd", "abcdef12", "abcdef1234567890", "a" * 40):
+            with self.subTest(sha=sha):
+                r = self.h.run(["session", "--title", f"sha-{sha[:6]}", "--commit", sha])
+                self.assertEqual(r.returncode, 0, f"{sha} should be accepted\n{r.stdout}")
 
     def test_session_requires_developer(self) -> None:
         # Wipe the developer identity
