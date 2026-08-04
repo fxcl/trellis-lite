@@ -50,15 +50,17 @@ MAX_JOURNAL_LINES = 2000
 
 # Task status state machine. Centralized so adding a new status (e.g. "paused")
 # only requires updating this constant + the ALLOWED_TRANSITIONS map below.
-# All writes to data["status"] must go through set_status() so transitions
-# stay consistent.
+# All writes to data["status"] must go through set_status(), which enforces
+# both membership (STATUSES) AND transition legality (ALLOWED_TRANSITIONS) —
+# see set_status() body.
 STATUSES: frozenset[str] = frozenset({"planning", "in_progress", "done", "archived", "cancelled"})
-# Forward-only transitions (no rollback). `cancelled` and `archived` are
-# terminal (no further transitions). `done` can only go to `archived`.
+# Forward-only transitions (no rollback). Terminal states (archived, cancelled)
+# cannot transition further. `done → cancelled` is allowed so a user can change
+# their mind after finishing but before archiving.
 ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "planning":    frozenset({"in_progress", "done", "archived", "cancelled"}),
     "in_progress": frozenset({"done", "archived", "cancelled"}),
-    "done":        frozenset({"archived"}),
+    "done":        frozenset({"archived", "cancelled"}),
     "archived":    frozenset(),  # terminal
     "cancelled":   frozenset(),  # terminal
 }
@@ -178,12 +180,31 @@ def date_prefix() -> str:
 # ============================================================================
 
 def read_json(path: Path) -> dict:
+    """Read JSON file. Returns {} on missing/corrupted (lossy — prefer read_json_strict for writes)."""
     if not path.is_file():
         return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {}
+
+
+def read_json_strict(path: Path) -> dict | None:
+    """Read JSON file strictly. Returns None on missing/corrupted/non-dict/empty.
+
+    Use for state-mutating operations (e.g. set_status) where 'file is bad'
+    must be distinguished from 'file is missing'. For general reads where an
+    empty dict is acceptable, prefer read_json() which returns {} on failure.
+    """
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict) or not data:
+        return None
+    return data
 
 
 def write_json(path: Path, data: dict) -> None:
@@ -255,23 +276,26 @@ def clear_current_task() -> None:
 def set_status(task_dir: Path, new_status: str, *, when: str | None = None) -> bool:
     """Set task.json status with optional timestamp. Returns True on success.
 
-    Strict: rejects on unknown status, missing file, or corrupted JSON.
-    Callers that want to abort a state-mutating command on failure should
-    check the return value and exit non-zero.
+    Strict: rejects (returns False) on:
+    - Unknown status (not in STATUSES)
+    - Illegal transition (current → new_status not in ALLOWED_TRANSITIONS)
+    - Missing file / corrupted JSON / empty dict / non-dict
 
+    Returns False (not raise) so callers can treat all failure modes uniformly
+    via the same `if not set_status(...): print Warning; continue` pattern.
     The `when` argument names the timestamp field (e.g. "started", "finished",
     "archived", "cancelled"); omit it for transitions that don't need a stamp.
     """
     if new_status not in STATUSES:
-        raise ValueError(f"invalid status: {new_status!r}")
+        return False
     task_json_path = task_dir / FILE_TASK_JSON
-    if not task_json_path.is_file():
+    data = read_json_strict(task_json_path)
+    if data is None:
         return False
-    try:
-        data = json.loads(task_json_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return False
-    if not isinstance(data, dict) or not data:
+    # Enforce forward-only transition. Tasks without a recorded current status
+    # (e.g. legacy or just-created planning task) skip this check.
+    current = data.get("status")
+    if current in STATUSES and new_status not in ALLOWED_TRANSITIONS[current]:
         return False
     data["status"] = new_status
     if when:
@@ -387,10 +411,9 @@ def cmd_init(args: list[str]) -> int:
             encoding="utf-8",
         )
 
-    # Create first journal
-    journal = workspace / f"{JOURNAL_PREFIX}1.md"
-    if not journal.exists():
-        journal.write_text(f"# Journal 1\n\n", encoding="utf-8")
+    # Create first journal via rotate_if_full so header text/format stays in
+    # sync with cmd_session's rotation and doctor's repair path.
+    rotate_if_full(workspace, list_journals(workspace))
 
     # Create spec README if not exists
     spec_readme = get_spec_dir() / "README.md"
@@ -857,9 +880,10 @@ def cmd_session(args: list[str]) -> int:
     with open(journal, "a", encoding="utf-8") as f:
         f.write(entry)
 
-    # Count total sessions across all journals
+    # Count total sessions across all journals (list_journals skips non-numbered
+    # files like journal-draft.md so this stays consistent with cmd_context).
     total = 0
-    for j in sorted(workspace.glob(f"{JOURNAL_PREFIX}*.md")):
+    for _num, j in list_journals(workspace):
         total += len(re.findall(r"^## ", j.read_text(encoding="utf-8"), re.MULTILINE))
 
     print(colored(f"✓ Session recorded: {title}", C_GREEN))
@@ -1068,8 +1092,8 @@ def cmd_doctor(args: list[str]) -> int:
     # 3. Required subdirs
     _check_required_subdirs(tdir, fix, warnings)
 
-    # 4. Workspace (returns (workspace, dev) for downstream checks)
-    workspace, _dev = _check_workspace_dir(fix, warnings)
+    # 4. Workspace (returns workspace for downstream checks)
+    workspace = _check_workspace_dir(fix, warnings)
 
     # 5. .current-task pointer
     _check_current_task(tdir, fix, problems)
@@ -1125,28 +1149,33 @@ def _check_required_subdirs(tdir: Path, fix: bool, warnings: list[str]) -> None:
         d = tdir.joinpath(*sub)
         if not d.is_dir():
             warnings.append(f"{'/'.join(sub)}/ missing")
+            # Remember index so we can pop this exact entry after fix, even if
+            # multiple subdirs are missing (pop() removes only the last).
+            idx = len(warnings) - 1
             print(colored("  ⚠", C_YELLOW), f"{'/'.join(sub)}/ missing")
             if fix:
                 d.mkdir(parents=True, exist_ok=True)
                 print(colored("    ↳", C_DIM), f"created {d}")
+                warnings.pop(idx)
         else:
             print(colored("  ✓", C_GREEN), f"{'/'.join(sub)}/ present")
 
 
-def _check_workspace_dir(fix: bool, warnings: list[str]) -> tuple[Path | None, str | None]:
+def _check_workspace_dir(fix: bool, warnings: list[str]) -> Path | None:
     """Check #4: workspace/<dev>/ exists; auto-create journal-1.md if missing."""
     workspace = get_workspace_dir()
     dev = get_developer()
     if workspace is None:
         warnings.append("workspace/ not present (no developer or developer dir missing)")
         print(colored("  ⚠", C_YELLOW), "workspace/ missing")
-        return None, None
+        return None
     if not workspace.is_dir():
         warnings.append(f"workspace/{dev} missing")
         print(colored("  ⚠", C_YELLOW), f"workspace/{dev} missing")
         if fix:
             workspace.mkdir(parents=True, exist_ok=True)
             print(colored("    ↳", C_DIM), f"created {workspace}")
+            warnings.pop()
     # Check journal exists (only meaningful now that workspace may have been created)
     if workspace.is_dir():
         journals = list_journals(workspace)
@@ -1154,13 +1183,14 @@ def _check_workspace_dir(fix: bool, warnings: list[str]) -> tuple[Path | None, s
             warnings.append("no journal files")
             print(colored("  ⚠", C_YELLOW), "no journal files")
             if fix:
-                (workspace / f"{JOURNAL_PREFIX}1.md").write_text(
-                    "# Journal 1\n\n", encoding="utf-8"
-                )
+                # Single source of truth for journal creation: defer to
+                # rotate_if_full so header text/format stays consistent.
+                rotate_if_full(workspace, list_journals(workspace))
                 print(colored("    ↳", C_DIM), "created journal-1.md")
+                warnings.pop()
         else:
             print(colored("  ✓", C_GREEN), f"workspace/{dev}/ has {len(journals)} journal(s)")
-    return workspace, dev
+    return workspace
 
 
 def _check_current_task(tdir: Path, fix: bool, problems: list[str]) -> None:
@@ -1199,7 +1229,7 @@ def _check_task_integrity(tdir: Path, problems: list[str]) -> None:
 
 
 def _check_journal_numbering(workspace: Path, warnings: list[str]) -> None:
-    """Check #7: journal-N.md numbering should start at 1 (gaps are warnings)."""
+    """Check #7: journal-N.md numbering should start at 1 and have no internal gaps."""
     journals = list_journals(workspace)
     if not journals:
         return
@@ -1207,6 +1237,12 @@ def _check_journal_numbering(workspace: Path, warnings: list[str]) -> None:
     if nums[0] != 1:
         warnings.append(f"journal numbering starts at {nums[0]} (expected 1)")
         print(colored("  ⚠", C_YELLOW), f"journals start at {nums[0]} (gaps before)")
+    # Internal gaps (e.g. 1, 3, 5) suggest manual deletes / partial rotations.
+    for i in range(len(nums) - 1):
+        if nums[i + 1] != nums[i] + 1:
+            msg = f"journal numbering gap: {nums[i]} → {nums[i + 1]}"
+            warnings.append(msg)
+            print(colored("  ⚠", C_YELLOW), msg)
 
 
 def _check_python_version(problems: list[str]) -> None:

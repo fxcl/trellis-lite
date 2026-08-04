@@ -43,9 +43,13 @@ class TestStatusMachineConstants(unittest.TestCase):
         self.assertEqual(ALLOWED_TRANSITIONS["archived"], frozenset())
         self.assertEqual(ALLOWED_TRANSITIONS["cancelled"], frozenset())
 
-    def test_done_only_transitions_to_archived(self) -> None:
-        # done is "complete but not yet archived" — the only next move is archive.
-        self.assertEqual(ALLOWED_TRANSITIONS["done"], frozenset({"archived"}))
+    def test_done_transitions_to_archived_or_cancelled(self) -> None:
+        # done is "complete but not yet archived" — the next move is either
+        # archive (typical) or cancel (user changed their mind).
+        self.assertEqual(
+            ALLOWED_TRANSITIONS["done"],
+            frozenset({"archived", "cancelled"}),
+        )
 
     def test_planning_can_go_to_any_active_or_terminal(self) -> None:
         # From planning, you can start work, finish directly, archive, or cancel.
@@ -113,9 +117,10 @@ class TestSetStatusHelper(unittest.TestCase):
         ok = set_status(self.task_dir, "done", when="finished")
         self.assertFalse(ok)
 
-    def test_set_status_rejects_unknown_status(self) -> None:
-        with self.assertRaises(ValueError):
-            set_status(self.task_dir, "paused")
+    def test_set_status_returns_false_on_unknown_status(self) -> None:
+        # Returns False (not raise) so callers can treat all failure modes
+        # uniformly via `if not set_status(...): print Warning; continue`.
+        self.assertFalse(set_status(self.task_dir, "paused"))
 
     def test_set_status_preserves_other_fields(self) -> None:
         # set_status must not nuke title/slug/created.
@@ -124,6 +129,39 @@ class TestSetStatusHelper(unittest.TestCase):
         self.assertEqual(data["title"], "T")
         self.assertEqual(data["slug"], "t")
         self.assertIn("created", data)
+
+    def test_set_status_enforces_forward_only_transitions(self) -> None:
+        # done → in_progress must be blocked (no rollback).
+        # Drive task to done via allowed transitions.
+        self.assertTrue(set_status(self.task_dir, "in_progress", when="started"))
+        self.assertTrue(set_status(self.task_dir, "done", when="finished"))
+        # Now try rollback — must return False.
+        self.assertFalse(set_status(self.task_dir, "in_progress"))
+
+    def test_set_status_allows_done_to_cancelled(self) -> None:
+        # User changed their mind after finishing but before archiving.
+        self.assertTrue(set_status(self.task_dir, "in_progress", when="started"))
+        self.assertTrue(set_status(self.task_dir, "done", when="finished"))
+        self.assertTrue(set_status(self.task_dir, "cancelled", when="cancelled"))
+        data = json.loads((self.task_dir / FILE_TASK_JSON).read_text())
+        self.assertEqual(data["status"], "cancelled")
+
+    def test_set_status_blocks_terminal_state_transitions(self) -> None:
+        # archived/cancelled are terminal — no further transitions.
+        self.assertTrue(set_status(self.task_dir, "in_progress", when="started"))
+        self.assertTrue(set_status(self.task_dir, "done", when="finished"))
+        self.assertTrue(set_status(self.task_dir, "archived", when="archived"))
+        # archived → anything must fail
+        self.assertFalse(set_status(self.task_dir, "in_progress"))
+        self.assertFalse(set_status(self.task_dir, "done"))
+
+    def test_set_status_skips_transition_check_when_status_missing(self) -> None:
+        # Legacy tasks without `status` field — let the transition happen so we
+        # don't break older data. Only enforce when a known status is recorded.
+        data = json.loads((self.task_dir / FILE_TASK_JSON).read_text())
+        del data["status"]
+        (self.task_dir / FILE_TASK_JSON).write_text(json.dumps(data), encoding="utf-8")
+        self.assertTrue(set_status(self.task_dir, "in_progress", when="started"))
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@
 
 | 原则 | 原版做法 | Lite 做法 | 动机 |
 |---|---|---|---|
-| **一个脚本搞定一切** | 28 个 Python 脚本分散在 `scripts/`, `task_store.py`, `task_context.py`... | 单文件 `trellis.py`（~1280 行） | 降低安装、维护、理解成本 |
+| **一个脚本搞定一切** | 28 个 Python 脚本分散在 `scripts/`, `task_store.py`, `task_context.py`... | 单文件 `trellis.py`（~1316 行） | 降低安装、维护、理解成本 |
 | **零外部依赖** | pnpm workspace + Node CLI + 多平台运行时 | 纯 Python 3.9+ 标准库 | 个人开发者不想装一堆依赖 |
 | **文件即数据库** | JSON 存任务 + JSONL 上下文清单 | JSON 存任务，Markdown 存日志 | 去掉中间层，AI 直接消费 |
 | **AI 直接消费** | AI 读 JSONL 上下文清单（`implement.jsonl`/`check.jsonl`，按任务圈定 spec/research 文件） | AI 直接读 PRD + spec 文件 | 去掉中间格式，减少信息损耗（代价：丢失按任务精准注入） |
@@ -95,7 +95,7 @@ AGENTS.md                         ← Qoder 入口（AI 读到的第一个文件
 
 ### 3.1 单文件设计（`trellis.py`）
 
-全部功能集中在一个 ~1280 行文件中，按功能分区：
+全部功能集中在一个 ~1316 行文件中，按功能分区：
 
 | 分区 | 行数 | 职责 |
 |---|---|---|
@@ -135,6 +135,14 @@ planning / in_progress ──(task cancel)──→ cancelled（目录保留，�
 ```
 
 > **与原版的状态术语差异**：原版 Trellis 任务状态为 `planning → completed`（归档时置 `completed`），lite 细化为 `planning / in_progress / done / archived / cancelled` 五态。这是有意为之 — 为单人工作流提供更细的进度可见性（`task list` 可区分进行中/已完成/已放弃）。若未来迁移回原版，需做状态字段映射。
+
+**时间戳约定**（`task.json` 字段）：
+
+- `created`：任务记录创建时刻（`planning` 状态），由 `_task_create` 写入，永不修改。
+- `started`：第一次切到 `in_progress` 的时刻，由 `task start` 写入。`planning` 任务上**该字段不存在**（任务是规划阶段、尚未开始）；这是正确语义，不是缺漏。
+- `finished` / `archived` / `cancelled`：分别由 `task finish` / `task archive` / `task cancel` 写入对应时刻。
+
+约定：每个时间戳对应**触发该 status 转移**的事件，详见 `set_status(task_dir, new_status, *, when=<field>)` helper。
 
 **关键设计决策**：
 
@@ -197,7 +205,7 @@ AI 在 Phase 2（CODE）开始前**必须读取相关 spec**，这不是建议�
 | 第 3 轮流程审查 | 流程 | 4 | skills 断链（workflow.md 内联路由）、commit 指引与 no-auto-commit 规则矛盾、新增 `task cancel` 放弃出口、start/finish 增加状态警告 |
 | 用户加固（提交 7c7d059） | 语义 / UX | 5 | 拒绝任务名 `archive`（防归档自身容器）、glob → endswith 字面匹配避免 glob 注入、create 已有活跃任务时警告、title 引号配对剥离、README 平台表述精确化 |
 | 第 4 轮体验增强（本轮） | UX / 文档 | 4 | `task list --all` 查看已归档任务、`--commit` 哈希格式校验、`context` 输出 spec 列表 + 最近 journal 摘要、workflow.md 增加 `.current-task` 并发警告 |
-| 本轮（质量提升） | 测试 / CI | 2 | `lite/tests/` 104 个 unittest 覆盖全部命令（unittest 零依赖）；`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上跑 py_compile + install.sh 烟测 + uninstall.sh 烟测 + unittest + coverage 报告；`trellis.py` 全量返回值类型注解（32/32）并补 14 个 cmd_* docstring |
+| 本轮（质量提升） | 测试 / CI | 2 | `lite/tests/` 112 个 unittest 覆盖全部命令（unittest 零依赖）；`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上跑 py_compile + install.sh 烟测 + uninstall.sh 烟测 + unittest + coverage 报告；`trellis.py` 全量返回值类型注解（32/32）并补 14 个 cmd_* docstring |
 
 ---
 

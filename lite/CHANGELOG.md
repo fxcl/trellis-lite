@@ -20,10 +20,14 @@
 ### 修复
 - **`task finish` 在 `task.json` 损坏或缺失时不再悄悄崩溃 + 误清活跃指针**：之前如果 `task.json` 损坏，`read_json` 返 `{}` 后 `data["status"] = "done"` 触发 `AttributeError`，但 `clear_current_task()` 仍然执行 → 任务被默默"吃掉"。新行为：严格解析 + 缺失/损坏/空数据均拒绝 + 显式提示 `trellis.py doctor --fix` 修复，活跃指针保留。
 - **`session --commit` 不合法格式改为拒绝（exit 1）**：之前是 warn + 静默丢弃 commit 字段（journal 正常写入），新行为：识别为拼写错误会污染未来的 journal 检索，因此拒绝整个 session 写入 + exit 1。
+- **任务状态机真正生效（`set_status` 现在拒绝非法转移）**：之前 `ALLOWED_TRANSITIONS` 注释承诺了"forward-only"但代码只检查目标状态是否合法（如 `done → in_progress` 这样的回滚原本能成功）。新行为：`set_status` 同时校验转移合法性，archive/cancelled 终态不可再转移；`done → cancelled` 显式允许（用户改主意）。内部用 `read_json_strict` 替代 `read_json` + 内联解析，丢失数据 vs 缺失文件的语义更清晰。
+- **`doctor --fix` 不再把已修复的 warning 留在 summary 列表里**：之前 `--fix` 只在 `problems` 路径 pop，新行为：warnings 路径同样 pop（`tasks/archive/` 等子目录、`workspace/<dev>`、`journal-1.md` 自动创建后），summary 现在能正确反映"已修好"。
+- **`doctor` 新增 journal 内部间隔检测**：之前只检查编号是否从 1 开始，现在扫描相邻 journal-N.md 之间的 gap（如 `1, 3, 5` 提示"手动删除 / 部分轮转"）。
 
 ### 文档
 - README.md / usage-guide.md / design.md / best-practices.md 同步：测试数量 41 → 74；行数 906 → 1100+；子命令清单加 `task delete` / `version` / `doctor` / `task list --all`。
 - 运行测试命令修正：之前 `python3 -m unittest discover -s lite/tests -t .` 在 Python 3.9+ 相对 import 失败；改为 `python3 -m unittest tests.test_*`。
+- `docs/design.md` 任务系统小节补"时间戳约定"：明确 `created` / `started` / `finished` / `archived` / `cancelled` 各自对应哪个事件；解释 `planning` 任务**没有** `started` 字段是正确语义。
 
 ---
 

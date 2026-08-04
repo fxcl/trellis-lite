@@ -72,3 +72,20 @@ class TestSession(unittest.TestCase):
         self.assertEqual(
             (ws / "journal-3.md").read_text().count("precious history"), 2100
         )
+
+    def test_session_total_ignores_non_numbered_journal_files(self) -> None:
+        """F15: cmd_session must use list_journals (which filters by journal-N.md),
+        so files like journal-draft.md with session-like headers do NOT inflate
+        the reported total session count."""
+        ws = self.h.tmpdir / ".trellis-lite/workspace/tester"
+        # Drop a non-numbered file that mimics a session entry
+        (ws / "journal-draft.md").write_text(
+            "# Draft\n\n## Fake session 1\n\nstuff\n\n## Fake session 2\n\nstuff\n"
+        )
+        # Record one real session
+        r = self.h.run(["session", "--title", "Real", "--summary", "S"])
+        self.assertEqual(r.returncode, 0)
+        # Total should be 1 (real), not 3 (real + 2 fake)
+        m = re.search(r"Total sessions: (\d+)", r.stdout)
+        self.assertIsNotNone(m, f"no total line in:\n{r.stdout}")
+        self.assertEqual(m.group(1), "1", f"F15 regression: non-numbered journal counted\n{r.stdout}")
