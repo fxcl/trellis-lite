@@ -6,6 +6,7 @@
 > - [README.md](../README.md) — 快速上手
 > - [design.md](design.md) — 设计原理与架构
 > - [usage-guide.md](usage-guide.md) — 完整使用示例
+> - [workflow-checklist.md](workflow-checklist.md) — 任务级 checklist（可复制）
 > - [workflow.md](../.trellis-lite/workflow.md) — AI 行为规范
 
 ---

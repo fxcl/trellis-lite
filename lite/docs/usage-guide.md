@@ -3,6 +3,8 @@
 > 完整示例：从安装到任务归档的全流程演示。
 >
 > 进阶：[best-practices.md](best-practices.md) — 任务分流、PRD/spec 写法、Sub-agent 策略。
+>
+> 任务级 checklist：[workflow-checklist.md](workflow-checklist.md) — 可复制到任务笔记的逐项打勾清单。
 
 ---
 
