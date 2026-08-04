@@ -48,6 +48,10 @@ JOURNAL_PREFIX = "journal-"
 # files small and to limit AI context-window consumption per read.
 MAX_JOURNAL_LINES = 2000
 
+# Version is the single source of truth for `version` output and diagnostics.
+# Keep it in sync with lite/README.md and any release tag.
+__version__ = "0.6.9"
+
 # ANSI colors
 C_RESET = "\033[0m"
 C_RED = "\033[31m"
@@ -307,9 +311,9 @@ def cmd_init(args: list[str]) -> int:
 # ============================================================================
 
 def cmd_task(args: list[str]) -> int:
-    """Dispatch to a task subcommand (create/start/current/finish/archive/cancel/list)."""
+    """Dispatch to a task subcommand (create/start/current/finish/archive/cancel/list/delete)."""
     if not args:
-        print(colored("Usage: trellis.py task <create|start|current|finish|archive|cancel|list>", C_RED))
+        print(colored("Usage: trellis.py task <create|start|current|finish|archive|cancel|list|delete>", C_RED))
         return 1
 
     sub = args[0]
@@ -329,6 +333,8 @@ def cmd_task(args: list[str]) -> int:
         return _task_cancel(rest)
     elif sub == "list":
         return _task_list(rest)
+    elif sub == "delete":
+        return _task_delete(rest)
     else:
         print(colored(f"Unknown task subcommand: {sub}", C_RED))
         return 1
@@ -628,6 +634,50 @@ def _task_list(args: list[str]) -> int:
     return 0
 
 
+def _task_delete(args: list[str]) -> int:
+    """Permanently delete a task directory. Defaults to cancelled-only; pass --force for any status."""
+    if not args:
+        print(colored("Usage: trellis.py task delete <name> [--force]", C_RED))
+        return 1
+
+    # Parse --force flag
+    force = False
+    name_args: list[str] = []
+    for a in args:
+        if a == "--force":
+            force = True
+        else:
+            name_args.append(a)
+    if not name_args:
+        print(colored("Usage: trellis.py task delete <name> [--force]", C_RED))
+        return 1
+
+    task_dir = resolve_task_dir(name_args[0])
+    if task_dir is None:
+        print(colored(f"Task not found: {name_args[0]}", C_RED))
+        return 1
+
+    # Status check: refuse to delete non-cancelled tasks unless --force
+    data = read_json(task_dir / FILE_TASK_JSON)
+    status = data.get("status", "?")
+    if not force and status not in ("cancelled",):
+        print(colored(
+            f"Refusing to delete task with status '{status}'. "
+            f"Cancel it first (task cancel {task_dir.name}) or use --force.",
+            C_RED,
+        ))
+        return 1
+
+    # Clear current pointer if it pointed here
+    current = get_current_task()
+    if current and Path(current).name == task_dir.name:
+        clear_current_task()
+
+    shutil.rmtree(task_dir)
+    print(colored(f"✓ Task deleted: {task_dir.name}", C_GREEN))
+    return 0
+
+
 # ============================================================================
 # Commands: session
 # ============================================================================
@@ -822,46 +872,31 @@ def cmd_specs(args: list[str]) -> int:
 
 
 # ============================================================================
-# Spec template
+# Spec template (loaded from external file so it can evolve independently)
 # ============================================================================
 
-SPEC_TEMPLATE = """# Coding Specs
+# Path to the bundled template shipped alongside this script. `init` writes
+# it to spec/README.md on first install so users have something to edit.
+# If the file is missing (e.g., someone deleted it after install), we fall
+# back to a tiny inline copy so init never crashes.
+SPEC_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "spec" / "TEMPLATE.md"
+_SPEC_TEMPLATE_FALLBACK = (
+    "# Coding Specs\n\n"
+    "Write your project's coding conventions and patterns here. The AI reads these\n"
+    "before implementing any code.\n\n"
+    "See the [Trellis Lite docs](https://github.com/) for guidance.\n"
+)
 
-Write your project's coding conventions and patterns here. The AI reads these
-before implementing any code.
 
-## How to structure specs
+def load_spec_template() -> str:
+    """Return the bundled SPEC template (or fallback if file is missing)."""
+    try:
+        return SPEC_TEMPLATE_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return _SPEC_TEMPLATE_FALLBACK
 
-Create one `.md` file per topic. Keep them short and actionable.
 
-### Example: `conventions.md`
-
-```markdown
-# Conventions
-
-- Use 2-space indentation
-- Prefer named exports over default exports
-- Error messages must include context for debugging
-- All public functions need JSDoc comments
-```
-
-### Example: `api-patterns.md`
-
-```markdown
-# API Patterns
-
-- REST endpoints use kebab-case: /api/user-profiles
-- All responses wrapped in { data, error, meta }
-- Pagination via cursor, not offset
-- Rate limit: 100 req/min per token
-```
-
-## When to update specs
-
-- You discover a new pattern worth repeating
-- A bug fix reveals a convention that should be enforced
-- You make a technical decision that affects future code
-"""
+SPEC_TEMPLATE = load_spec_template()
 
 
 # ============================================================================
@@ -870,7 +905,7 @@ Create one `.md` file per topic. Keep them short and actionable.
 
 def print_help() -> None:
     print(colored("Trellis Lite", C_CYAN))
-    print(colored("Single-file task & session manager for agile solo developers.\n", C_DIM))
+    print(colored(f"v{__version__} — Single-file task & session manager for agile solo developers.\n", C_DIM))
     print("Commands:")
     print(f"  {colored('init', C_GREEN)} <name>                    Initialize developer identity")
     print(f"  {colored('task create', C_GREEN)} \"<title>\" [--slug <s>]  Create a new task")
@@ -880,11 +915,19 @@ def print_help() -> None:
     print(f"  {colored('task archive', C_GREEN)} <name>            Archive a completed task")
     print(f"  {colored('task cancel', C_GREEN)} <name>            Cancel an abandoned task (keeps directory)")
     print(f"  {colored('task list', C_GREEN)} [--all]                   List tasks (--all includes archive)")
+    print(f"  {colored('task delete', C_GREEN)} <name>            Delete a cancelled task permanently")
     print(f"  {colored('session', C_GREEN)} --title \"T\" --summary \"S\"  Record a session journal entry")
     print(f"  {colored('context', C_GREEN)}                       Print full session context")
     print(f"  {colored('specs', C_GREEN)}                         List available spec files")
     print(f"  {colored('help', C_GREEN)}                          Show this help")
+    print(f"  {colored('version', C_GREEN)}                       Print version and exit")
     print(f"\nWorkflow: {colored('init', C_DIM)} → {colored('task create', C_DIM)} → {colored('task start', C_DIM)} → code → {colored('task archive', C_DIM)} → {colored('session', C_DIM)}")
+
+
+def cmd_version(args: list[str]) -> int:
+    """Print the trellis-lite version and exit."""
+    print(f"trellis-lite {__version__}")
+    return 0
 
 
 def main() -> int:
@@ -904,6 +947,7 @@ def main() -> int:
         "session": cmd_session,
         "context": cmd_context,
         "specs": cmd_specs,
+        "version": cmd_version,
     }
 
     handler = dispatch.get(cmd)
