@@ -2,6 +2,8 @@
 
 **Trellis 的精简版** — 为敏捷个人开发者打造的 AI 编码工作流框架。
 
+📘 进阶阅读：[使用指南](docs/usage-guide.md) · [最佳实践](docs/best-practices.md) · [设计原理](docs/design.md)
+
 ## 为什么是 Lite？
 
 原版 Trellis 功能强大但复杂：4 阶段工作流、20+ 平台适配、多 agent 协作（Channel）、跨会话记忆系统（Memory）、JSONL 上下文清单。对于个人开发者来说，这些往往用不上。
