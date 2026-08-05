@@ -50,7 +50,7 @@ cat .trellis-lite/workspace/yourname/journal-1.md  # 应有 # Journal 1
 # 2. 跑一次 context 看输出
 python3 .trellis-lite/scripts/trellis.py context
 
-# 3. 跑 doctor 全面自检（详见第七节）
+# 3. 跑 doctor 全面自检（详见第八节）
 python3 .trellis-lite/scripts/trellis.py doctor
 ```
 
@@ -68,7 +68,7 @@ python3 .trellis-lite/scripts/trellis.py doctor
 
 **结论**：install 只在"目标未安装"时执行初始化动作。需要重新 init、改 dev name、刷新模板、迁移到新版本时，先 `uninstall.sh .` 再 `install.sh . <name>` —— **不要期望重装会"修复"任何东西**。
 
-如果只是想检查健康状态：`doctor [--fix]`（详见第七节）。
+如果只是想检查健康状态：`doctor [--fix]`（详见第八节）。
 
 ---
 
@@ -506,10 +506,11 @@ python3 trellis.py doctor --fix
 
 ### 9.3 关键设计点
 
-- **不覆盖用户的 hook**：uninstall 只删含 marker 的 hook
+- **不覆盖用户的 hook**：uninstall 只删含 `Trellis Lite` 字符串的 hook（宽松匹配——整个 hook 是 Lite 的才删）
 - **不覆盖用户的 .gitignore 行**：awk 状态机只在 `# Trellis Lite runtime` marker 块内删除 `.trellis-lite/.X` 条目，用户内容跨用户行保留
-- **marker 镋定**：grep 使用 `-qxF` 镋定整行 + 字面匹配，散文中提到 “Trellis Lite runtime” 不会误触发清理
-- **退出安全**：mktemp 临时文件在 EXIT trap 中清理，即使 awk 失败也不会残留 /tmp
+- **marker 锚定**：`.gitignore` marker 检测用 `grep -qxF` 锚定整行 + 字面匹配——散文中提到 "Trellis Lite runtime" 不会误触发清理（O14 修复点）
+- **退出安全**：mktemp 临时文件在 EXIT trap 中清理（O15 修复点），即使 awk 失败也不会残留 /tmp
+- **developer 保留**：`install.sh` 检测到 `.developer` 已存在时跳过 init（O16 修复点），不会静默覆盖用户手工设置的 dev name
 
 ### 9.4 完整生命周期演示
 
