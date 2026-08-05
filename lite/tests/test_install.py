@@ -69,6 +69,31 @@ class TestInstall(unittest.TestCase):
             if not had_stale:
                 stale.unlink(missing_ok=True)
 
+    # ---- O16 coverage: re-install must not clobber existing .developer -----
+
+    def test_install_preserves_existing_developer_on_reinstall(self) -> None:
+        """O16: re-running install.sh on an already-initialized project must
+        NOT silently overwrite the existing developer name. Only a fresh
+        install (no .developer) runs init; subsequent installs skip it so
+        users who changed their developer name explicitly are not surprised.
+        """
+        # First install — seeds .developer=tester
+        r1 = self._run_install("tester")
+        self.assertEqual(r1.returncode, 0, f"first install failed: {r1.stdout}\n{r1.stderr}")
+        dev_file = self.tmpdir / ".trellis-lite/.developer"
+        self.assertEqual(dev_file.read_text().strip(), "name=tester")
+
+        # Second install with a different name — .developer must survive
+        r2 = self._run_install("someone-else")
+        self.assertEqual(r2.returncode, 0, f"second install failed: {r2.stdout}\n{r2.stderr}")
+        self.assertEqual(
+            dev_file.read_text().strip(),
+            "name=tester",
+            "second install must not overwrite existing .developer",
+        )
+        # And install should have surfaced a note about the skip.
+        self.assertIn(".developer already set", r2.stdout)
+
 
 class TestUninstall(unittest.TestCase):
     def setUp(self) -> None:
@@ -76,10 +101,19 @@ class TestUninstall(unittest.TestCase):
         # Initialize as a git repo so install.sh triggers the pre-commit hook
         # installation step (O9 fix path). Without .git/, install.sh silently
         # skips the hook step, leaving the uninstall cleanup code untested.
-        subprocess.run(
+        result = subprocess.run(
             ["git", "init", "-q"],
             cwd=str(self.tmpdir), capture_output=True, text=True, timeout=10,
         )
+        # If git isn't available or sandboxed, skip the entire class — without
+        # .git/ the install script doesn't trigger hook installation, so the
+        # tests that depend on hook cleanup would silently degrade to no-ops
+        # and produce false positives.
+        if result.returncode != 0:
+            self.skipTest(
+                f"git init failed (rc={result.returncode}); "
+                f"TestUninstall requires git to seed .git/. stderr={result.stderr!r}"
+            )
         # Seed .gitignore so install.sh triggers the runtime-files step
         # (it checks existence of .gitignore before adding entries).
         (self.tmpdir / ".gitignore").write_text("node_modules/\n")
@@ -252,3 +286,41 @@ class TestUninstall(unittest.TestCase):
         # User content (before, between, and after the block) must survive
         self.assertIn("node_modules/", content)
         self.assertIn("user-added note between entries", content)
+
+    # ---- O14 coverage: grep must be anchored (false-positive guard) -----
+
+    def test_uninstall_ignores_non_marker_mentions(self) -> None:
+        """O14: a user comment that merely mentions 'Trellis Lite runtime' in
+        prose must NOT be confused with the real marker comment.
+
+        The original grep -q "# Trellis Lite runtime" matched anywhere in the
+        file, so a line like '# Trellis Lite runtime monitoring explained'
+        would falsely trigger the cleanup branch and print a misleading
+        'removed Trellis Lite runtime entries' message even though nothing
+        was actually changed. The fix anchors the grep (-x) and makes it
+        literal (-F) so only the exact marker line enters the branch.
+        """
+        self._install_all()
+        gitignore = self.tmpdir / ".gitignore"
+        # Replace the real marker with a prose mention that happens to
+        # contain the same substring (so unanchored grep would match).
+        original = gitignore.read_text()
+        self.assertIn("# Trellis Lite runtime\n", original)
+        edited = original.replace(
+            "# Trellis Lite runtime\n",
+            "# Trellis Lite runtime monitoring explained below\n",
+        )
+        self.assertNotEqual(edited, original, "sanity: replacement should mutate")
+        gitignore.write_text(edited, encoding="utf-8")
+
+        r = self._run_uninstall(str(self.tmpdir))
+        self.assertEqual(r.returncode, 0, f"uninstall failed: {r.stdout}\n{r.stderr}")
+        # The .gitignore must NOT have been touched — the prose mention is
+        # not a real marker, so neither the marker nor the runtime entries
+        # should be removed.
+        content = gitignore.read_text()
+        self.assertIn("# Trellis Lite runtime monitoring explained below", content)
+        self.assertIn(".trellis-lite/.developer", content)
+        self.assertIn(".trellis-lite/.current-task", content)
+        # And uninstall must not have printed the misleading "removed" line.
+        self.assertNotIn("✓ .gitignore (removed Trellis Lite runtime entries)", r.stdout)

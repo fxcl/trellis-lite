@@ -193,7 +193,17 @@ echo ""
 echo -e "${GREEN}→ Running trellis.py init ...${NC}"
 # Run from target dir so get_repo_root() finds the target .trellis-lite/
 cd "$TARGET_DIR"
-python3 "${DST_TRELLIS}/scripts/trellis.py" init "$DEV_NAME"
+# If .developer already exists (e.g. re-running install on an existing
+# Trellis project), don't silently overwrite it — the user may have run
+# `init` deliberately with a different name and re-running install would
+# surprise them by rewriting it. Re-running `init` explicitly is still
+# available for users who want to change their developer name.
+if [ -f "${DST_TRELLIS}/.developer" ]; then
+    EXISTING_DEV="$(grep '^name=' "${DST_TRELLIS}/.developer" | head -1 | cut -d= -f2-)"
+    echo -e "${YELLOW}  Note: .developer already set to '${EXISTING_DEV}'; skipping init (re-run 'init' to change).${NC}"
+else
+    python3 "${DST_TRELLIS}/scripts/trellis.py" init "$DEV_NAME"
+fi
 
 echo ""
 echo -e "${GREEN}✓ Trellis Lite installed!${NC}"

@@ -25,16 +25,21 @@
 - **`doctor` 新增 journal 内部间隔检测**：之前只检查编号是否从 1 开始，现在扫描相邻 journal-N.md 之间的 gap（如 `1, 3, 5` 提示"手动删除 / 部分轮转"）。
 - **`task start` 在任务已 `in_progress` 时不再报误导性"corrupted"警告**：之前 `set_status` 对同状态返回 `False`（因为 `ALLOWED_TRANSITIONS` 不含自身），调用方把所有 `False` 统一解释为"task.json missing or corrupted"。新行为：`set_status` 幂等化（同状态返回 `True`，不重写文件、不更新时间戳）；`_task_start` 预检当前状态，对已激活任务输出友好提示 `Note: 'xxx' is already in_progress.`。
 - **`uninstall.sh` 清理 `.gitignore` 时不再残留后续条目（用户编辑保护）**：之前 awk 的 `skip=0` 默认规则会在每个非 `.trellis-lite/.X` 行上重置跳过标志，导致用户在标记块内插入注释/空行后，后面跟着的 `.trellis-lite/.X` 行不会被删除（如 `.trellis-lite/.current-task` 残留）。新行为：skip 在用户内容行（注释/空行/其它规则）上保持为 1，只在遇上下一个 `# Trellis Lite runtime` 标记或非 Trellis 区时才隐式重置——可以跨中间用户行清理同一标记块内的所有 `.trellis-lite/.X` 条目。
+- **`uninstall.sh` 检测 `.gitignore` marker 时不再被散文文本误触发**：之前 `grep -q "# Trellis Lite runtime"` 不锚定，用户在注释中提到该字符串（如 `# Trellis Lite runtime monitoring explained`）会误入清理分支并输出"removed Trellis Lite runtime entries"误导消息（实际什么都没动）。新行为：`grep -qxF` 镋定整行 + 字面匹配，只有真正的 marker 行才会触发清理。
+- **`uninstall.sh` mktemp 临时文件现在在退出时清理**：之前 `tmpfile=$(mktemp)` 后若 awk 失败（极罕见但理论上可能）则 `&&` 链不执行 `mv`，tmpfile 残留在 `/tmp`。新行为：增加 `trap 'rm -f "$tmpfile" 2>/dev/null || true' EXIT` 保证 EXIT 时清理。
+- **`install.sh` 重装不再静默覆盖已有 `.developer`**：之前重复运行 install.sh 到同一项目时 `init` 会无条件覆盖 `.developer`（用户原本手工指定的 dev name 被静默替换）。新行为：如果 `.trellis-lite/.developer` 已存在，install 跳过 init 步骤并输出 `Note: .developer already set to '...'; skipping init (re-run 'init' to change).`。需要手动改 dev name 时仍可显式调用 `trellis.py init`。
 
 ### 文档
-- README.md / usage-guide.md / design.md / best-practices.md 同步：测试数量 112 → 121；行数 906 → 1100+；子命令清单加 `task delete` / `version` / `doctor` / `task list --all`。
+- README.md / usage-guide.md / design.md / best-practices.md 同步：测试数量 112 → 123；行数 906 → 1100+；子命令清单加 `task delete` / `version` / `doctor` / `task list --all`。
 - 运行测试命令修正：之前 `python3 -m unittest discover -s lite/tests -t .` 在 Python 3.9+ 相对 import 失败；改为 `python3 -m unittest tests.test_*`。
 - AGENTS.md 命令清单补全 `task delete` / `doctor` / `version`。
 - `exit-codes.md` 新增"退出码不对称 rationale"章节：解释 `task finish` 在 `task.json` 损坏时返回 1（不可逆，须中止）vs `start` / `archive` / `cancel` 返回 0（可恢复，降级继续）的设计依据。
 - `docs/design.md` 任务系统小节补"时间戳约定"：明确 `created` / `started` / `finished` / `archived` / `cancelled` 各自对应哪个事件；解释 `planning` 任务**没有** `started` 字段是正确语义。
+- `install.sh` --help / 输出现范补"重装语义"：说明重装不会覆盖已有 `.developer`、AGENTS.md、CLAUDE.md、.clinerules/、.gitignore runtime 条目、pre-commit hook，仅在目标未安装时执行初始化动作。
 
 ### 测试
-- `TestUninstall` 5 个新测试覆盖 `uninstall.sh` 的 `.gitignore` 清理与 pre-commit hook 移除路径（含 O9 补充覆盖 + O11 回归保护：用户在 `.gitignore` 标记块内插入注释/空行后，uninstall 仍能完全清理所有 `.trellis-lite/.X` 条目）。测试总数 116 → 121。
+- `TestUninstall` 5 个新测试覆盖 `uninstall.sh` 的 `.gitignore` 清理与 pre-commit hook 移除路径（含 O9 补充覆盖 + O11 回归保护：用户在 `.gitignore` 标记块内插入注释/空行后，uninstall 仍能完全清理所有 `.trellis-lite/.X` 条目）。
+- `TestUninstall` + `TestInstall` 新增 3 个 O14/O16 测试：`test_uninstall_ignores_non_marker_mentions`（散文 marker 不误触发清理）、`test_install_preserves_existing_developer_on_reinstall`（重装保留 dev name）；`TestUninstall.setUp` O17 增强：git init 失败时 `self.skipTest()` 避免 false-positive。测试总数 116 → 123。
 
 ---
 
