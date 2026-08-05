@@ -29,7 +29,15 @@
 - **`uninstall.sh` mktemp 临时文件现在在退出时清理**：之前 `tmpfile=$(mktemp)` 后若 awk 失败（极罕见但理论上可能）则 `&&` 链不执行 `mv`，tmpfile 残留在 `/tmp`。新行为：增加 `trap 'rm -f "$tmpfile" 2>/dev/null || true' EXIT` 保证 EXIT 时清理。
 - **`install.sh` 重装不再静默覆盖已有 `.developer`**：之前重复运行 install.sh 到同一项目时 `init` 会无条件覆盖 `.developer`（用户原本手工指定的 dev name 被静默替换）。新行为：如果 `.trellis-lite/.developer` 已存在，install 跳过 init 步骤并输出 `Note: .developer already set to '...'; skipping init (re-run 'init' to change).`。需要手动改 dev name 时仍可显式调用 `trellis.py init`。
 
+### 改进（第 4 轮 oracle-reviewer）
+- **`session --commit` 现在接受 4–64 位 hex SHA**：之前正则锚定 4–40 位 hex，仅支持 SHA-1。Git 2.42+ 引入 SHA-256 作为默认哈希算法后，commit 字段被误判为"格式错误"拒绝写入。新行为：regex 改为 `^[0-9a-f]{4,64}$`，同时支持 SHA-1 (40) 和 SHA-256 (64)；错误提示同步更新。
+- **`task start` 的 in-progress 冲突警告改为汇总单条**：之前 N 个其他 in_progress 任务输出 N 行 `Warning: '...' is still in_progress`；新行为：扫一遍 tasks/ 收集冲突列表，输出**单条**汇总 warning（含计数 + 全部冲突任务名 + 清理建议），减少视觉噪音同时保留全部信息。
+- **`resolve_task_dir` 现在用异常信号歧义与缺失**：之前把两种错误都塞进 `return None` + 各自打印，调用方需要再手打一次 `Task not found: ...`（导致重复消息）。新行为：拆为 `AmbiguousTaskName(Exception)`（携带候选列表）和 `FileNotFoundError`，新增 `resolve_or_report()` 包装函数集中翻译为用户消息；`_task_start` / `_task_archive` / `_task_cancel` / `_task_delete` 4 个调用方都改用包装函数，删除冗余的 `Task not found` 行。
+- **`cmd_doctor` 删去死代码 try/except**：原本早退分支的 `try/except Exception` 是为了让 `_check_trellis_present` 的 "missing" 信息统一走 problems 列表，但实际上下游检查已经处理该路径。新行为：直接调用 `get_repo_root(init_ok=True)`，依赖 `_check_trellis_present` 统一报告，少 4 行嵌套结构。
+- **`_task_delete` 状态判断改用直接比较**：之前 `if status not in ("cancelled",)`（一个元素的元组，可读性差 + 容易被误改成 `(cancelled, archived)`）；新行为：`if status != "cancelled"`，与设计意图一致。
+
 ### 文档
+- `best-practices.md` 修正第 16 节"决策清单"中"CLI 已会拒绝多 in_progress"的描述：实际 CLI 只 Warning + 返 0，由人工自律。`--replace` 描述同步修正（显式接管，不是替换同名任务）。
 - README.md / usage-guide.md / design.md / best-practices.md 同步：测试数量 112 → 123；行数 906 → 1100+；子命令清单加 `task delete` / `version` / `doctor` / `task list --all`。
 - 运行测试命令修正：之前 `python3 -m unittest discover -s lite/tests -t .` 在 Python 3.9+ 相对 import 失败；改为 `python3 -m unittest tests.test_*`。
 - AGENTS.md 命令清单补全 `task delete` / `doctor` / `version`。

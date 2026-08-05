@@ -95,7 +95,10 @@ class TestTaskLifecycle(unittest.TestCase):
         # Take over via --replace to create B while A is still in_progress
         self.h.run(["task", "create", "B", "--slug", "b", "--replace"])
         r = self.h.run(["task", "start", "b"])
-        self.assertIn("Warning", r.stdout)
+        # F20: single consolidated warning (not one line per task)
+        self.assertEqual(r.stdout.count("Warning"), 1,
+                         f"expected single consolidated warning, got:\n{r.stdout}")
+        self.assertIn("1 other task", r.stdout)
         self.assertIn("a", r.stdout)
 
     def test_start_rejects_path_traversal(self) -> None:

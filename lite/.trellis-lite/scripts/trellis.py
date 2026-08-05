@@ -347,16 +347,32 @@ def rotate_if_full(workspace: Path, journals: list[tuple[int, Path]]) -> Path:
     return journal
 
 
-def resolve_task_dir(task_input: str) -> Path | None:
-    """Resolve task name to absolute directory path."""
+class AmbiguousTaskName(Exception):
+    """Raised when a task name resolves to multiple matching directories.
+
+    Carries the input and the candidate paths so callers can present a
+    helpful list instead of a generic "Task not found" message.
+    """
+    def __init__(self, task_input: str, matches: list[Path]) -> None:
+        self.task_input = task_input
+        self.matches = matches
+        super().__init__(f"ambiguous task name: {task_input}")
+
+
+def resolve_task_dir(task_input: str) -> Path:
+    """Resolve task name to absolute directory path.
+
+    Raises:
+        FileNotFoundError: if no directory matches the input.
+        AmbiguousTaskName: if multiple directories match (caller should
+            present the candidate list rather than a generic not-found msg).
+    """
     # Reject path separators and traversal (e.g. "../spec")
     if "/" in task_input or "\\" in task_input or ".." in task_input:
-        print(colored(f"Invalid task name: {task_input}", C_RED))
-        return None
+        raise FileNotFoundError(f"Invalid task name: {task_input}")
     # Reject the archive container itself (bare name, case-insensitive)
     if task_input.lower() == DIR_ARCHIVE:
-        print(colored(f"Invalid task name: {task_input}", C_RED))
-        return None
+        raise FileNotFoundError(f"Invalid task name: {task_input}")
     tasks_dir = get_tasks_dir()
     # Try direct: tasks/<input>
     candidate = tasks_dir / task_input
@@ -364,7 +380,7 @@ def resolve_task_dir(task_input: str) -> Path | None:
         return candidate
     # Try with date prefix: tasks/MM-DD-<input>
     # Literal endswith match (no glob semantics) so user input is matched exactly
-    matches = []
+    matches: list[Path] = []
     for t in tasks_dir.iterdir():
         if t.is_dir() and t.name.endswith(f"-{task_input}"):
             matches.append(t)
@@ -372,11 +388,27 @@ def resolve_task_dir(task_input: str) -> Path | None:
     if len(matches) == 1:
         return matches[0]
     if len(matches) > 1:
-        print(colored(f"Ambiguous: multiple matches for '{task_input}':", C_YELLOW))
-        for m in matches:
+        raise AmbiguousTaskName(task_input, matches)
+    raise FileNotFoundError(f"task not found: {task_input}")
+
+
+def resolve_or_report(task_input: str) -> Path | None:
+    """Call resolve_task_dir and translate exceptions into user-facing output.
+
+    Returns the resolved directory, or None after printing an appropriate
+    error message (red "Task not found" or yellow "Ambiguous" list). Callers
+    should treat None as "already reported, just exit 1".
+    """
+    try:
+        return resolve_task_dir(task_input)
+    except AmbiguousTaskName as e:
+        print(colored(f"Ambiguous: multiple matches for '{e.task_input}':", C_YELLOW))
+        for m in e.matches:
             print(f"  {m.name}")
         return None
-    return None
+    except FileNotFoundError as e:
+        print(colored(str(e), C_RED))
+        return None
 
 
 # ============================================================================
@@ -582,19 +614,29 @@ def _task_start(args: list[str]) -> int:
         usage_for("task start")
         return 1
 
-    task_dir = resolve_task_dir(args[0])
+    task_dir = resolve_or_report(args[0])
     if task_dir is None:
-        print(colored(f"Task not found: {args[0]}", C_RED))
         return 1
 
-    # Warn when other tasks are still in_progress (one task at a time)
+    # Warn when other tasks are still in_progress (one task at a time). Collect
+    # all such tasks first so we emit a single concise warning instead of one
+    # line per task — the user already has actionable info via `task list`.
     tasks_dir = get_tasks_dir()
+    other_in_progress: list[str] = []
     if tasks_dir.is_dir():
         for t in sorted(tasks_dir.iterdir()):
             if not t.is_dir() or t.name in (DIR_ARCHIVE, task_dir.name):
                 continue
             if read_json(t / FILE_TASK_JSON).get("status") == "in_progress":
-                print(colored(f"Warning: '{t.name}' is still in_progress — one task at a time", C_YELLOW))
+                other_in_progress.append(t.name)
+    if other_in_progress:
+        names = ", ".join(other_in_progress)
+        print(colored(
+            f"Warning: {len(other_in_progress)} other task(s) still in_progress — "
+            f"one task at a time ({names}). "
+            f"Run 'task finish' or 'task cancel' to clean up.",
+            C_YELLOW,
+        ))
 
     # Update status via the central state-machine helper.
     # set_status is idempotent (returns True when already in_progress), so we
@@ -682,9 +724,8 @@ def _task_archive(args: list[str]) -> int:
         usage_for("task archive")
         return 1
 
-    task_dir = resolve_task_dir(args[0])
+    task_dir = resolve_or_report(args[0])
     if task_dir is None:
-        print(colored(f"Task not found: {args[0]}", C_RED))
         return 1
 
     # Update status via the central state-machine helper
@@ -726,9 +767,8 @@ def _task_cancel(args: list[str]) -> int:
         usage_for("task cancel")
         return 1
 
-    task_dir = resolve_task_dir(args[0])
+    task_dir = resolve_or_report(args[0])
     if task_dir is None:
-        print(colored(f"Task not found: {args[0]}", C_RED))
         return 1
 
     # Update status via the central state-machine helper
@@ -808,15 +848,14 @@ def _task_delete(args: list[str]) -> int:
         usage_for("task delete")
         return 1
 
-    task_dir = resolve_task_dir(name_args[0])
+    task_dir = resolve_or_report(name_args[0])
     if task_dir is None:
-        print(colored(f"Task not found: {name_args[0]}", C_RED))
         return 1
 
     # Status check: refuse to delete non-cancelled tasks unless --force
     data = read_json(task_dir / FILE_TASK_JSON)
     status = data.get("status", "?")
-    if not force and status not in ("cancelled",):
+    if not force and status != "cancelled":
         print(colored(
             f"Refusing to delete task with status '{status}'. "
             f"Cancel it first (task cancel {task_dir.name}) or use --force.",
@@ -862,11 +901,12 @@ def cmd_session(args: list[str]) -> int:
         usage_for("session")
         return 1
 
-    # Validate commit hash format. Reject (exit 1) — a typo here would silently
-    # produce a journal entry with a bogus hash that misleads future readers.
-    if commit and not re.match(r"^[0-9a-f]{4,40}$", commit):
+    # Validate commit hash format. Accept 4–64 hex chars to cover both SHA-1 (40)
+    # and SHA-256 (64) — git 2.42+ may use SHA-256 by default. Reject (exit 1) so
+    # a typo here doesn't silently produce a journal entry with a bogus hash.
+    if commit and not re.match(r"^[0-9a-f]{4,64}$", commit):
         print(colored(
-            f"Error: '{commit}' doesn't look like a git SHA (4-40 hex chars). "
+            f"Error: '{commit}' doesn't look like a git SHA (4-64 hex chars). "
             f"Refusing to record a session with a bogus commit hash.",
             C_RED,
         ))
@@ -1090,12 +1130,10 @@ def cmd_doctor(args: list[str]) -> int:
     print()
 
     # 1. .trellis-lite/ present (early-abort if not)
-    try:
-        repo_root = get_repo_root(init_ok=True)
-        tdir = repo_root / TRELLIS_DIR
-    except Exception:
-        problems.append("Could not determine repo root")
-        return _doctor_finish(problems, warnings)
+    # init_ok=True so get_repo_root() falls back to cwd when .trellis-lite/ is
+    # missing; _check_trellis_present below handles the "missing" report.
+    repo_root = get_repo_root(init_ok=True)
+    tdir = repo_root / TRELLIS_DIR
 
     if not _check_trellis_present(tdir, problems):
         return _doctor_finish(problems, warnings)

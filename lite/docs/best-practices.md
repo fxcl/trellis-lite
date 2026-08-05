@@ -796,7 +796,7 @@ AI 路径：
 - 每个新发现写 spec
 - 每个 5min+ 任务建 PRD
 - 让 AI 写完后**问**你才 commit
-- 1 个时间 1 个 in_progress（CLI 已会拒绝）
+- 1 个时间 1 个 in_progress（CLI 已会警告，需人工自律）
 - PRD 用动词 + 数字 + 验收点
 - **状态机异常时跑 `doctor --fix`**（不手动改 task.json）
 - **重装前先 `uninstall.sh .` + `install.sh . <name>`**（install 是幂等跳过，不是修复）
@@ -811,7 +811,7 @@ AI 路径：
 - 不要跳过 update-spec 阶段
 - 不要多个任务并行 in_progress
 - 不要让 PRD 长过大半页（一页内能 review）
-- **不要为单任务创建多个 `in_progress`**（CLI 会拒绝；`--replace` 要明确）
+- **不要为单任务创建多个 `in_progress`**（CLI 不强制；用 `task finish` / `task cancel` 切换，或 `--replace` 显式接管）
 - **不要期待 `install.sh` 重装会覆盖任何东西**（见第一节“重装语义”）
 - **不要手动改 task.json**（会被 `doctor` 报 Warning，且会绕开 set_status 守门）
 - **不要把 `task list` / `task current` 当 CI 闸门**（它们空状态返 0）

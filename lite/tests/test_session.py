@@ -43,8 +43,9 @@ class TestSession(unittest.TestCase):
             self.assertNotIn("T\n", j.read_text())
 
     def test_session_accepts_various_valid_shas(self) -> None:
-        """4-char short SHA through 40-char full SHA are all valid."""
-        for sha in ("abcd", "abcdef12", "abcdef1234567890", "a" * 40):
+        """4-char short SHA through 64-char SHA-256 are all valid (covers
+        git 2.42+ repositories that use SHA-256 by default)."""
+        for sha in ("abcd", "abcdef12", "abcdef1234567890", "a" * 40, "a" * 64):
             with self.subTest(sha=sha):
                 r = self.h.run(["session", "--title", f"sha-{sha[:6]}", "--commit", sha])
                 self.assertEqual(r.returncode, 0, f"{sha} should be accepted\n{r.stdout}")
