@@ -212,6 +212,34 @@ def write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def _safe_mkdir(p: Path) -> bool:
+    """mkdir p, transparently recovering from a stray file at the same path.
+
+    Returns True if a new directory was created (or replaced over a file),
+    False if `p` was already a directory.
+
+    Why this exists: pathlib's `Path.mkdir(exist_ok=True)` only suppresses
+    the "already exists" error when the path is **already a directory**.
+    If the path is a regular file (stray `touch`, partial git sync of a
+    half-initialised state, mid-init crash leaving a file where a dir
+    should be), `mkdir` raises `FileExistsError` on Python 3.12+ —
+    a raw traceback that defeats `doctor --fix`. Unlinking the stray file
+    first lets the auto-repair path complete the user's intent
+    (`mkdir` then succeeds).
+
+    Use for all `mkdir(parents=True, exist_ok=True)` calls in repair paths.
+    """
+    if p.is_dir():
+        return False
+    if p.exists() and not p.is_dir():
+        # Stray file at the path we need as a directory — remove it.
+        # Doctor is opt-in via `trellis.py doctor --fix`, so this
+        # deletion only happens when the user explicitly asked to repair.
+        p.unlink()
+    p.mkdir(parents=True, exist_ok=True)
+    return True
+
+
 # ============================================================================
 # Git helpers
 # ============================================================================
@@ -656,14 +684,25 @@ def _task_start(args: list[str]) -> int:
     # pre-check the current status to show an accurate message: a re-start on
     # an already-active task is a benign no-op, not a corrupted file.
     #
-    # Forward-only transitions (ALLOWED_TRANSITIONS) prevent re-entering
-    # in_progress from done / archived / cancelled. Without this guard, a
-    # user running `task start <finished-task>` would see a confusing
-    # "task.json missing or corrupted" warning AND a "✓ Task started"
-    # success line, while .current-task switched but task.json still held
-    # the old status — a split-brain state. Surface the state-machine
-    # rejection explicitly instead of letting it surface as silent failure.
-    existing_status = read_json(task_dir / FILE_TASK_JSON).get("status")
+    # F48: pre-check with read_json_strict so missing/corrupted task.json
+    # refuses cleanly. Previously the fallback `elif not set_status(...)`
+    # branch printed a Warning but still called set_current_task + printed
+    # "✓ Task started", leaving `.current-task` pointing at a task whose
+    # metadata is unreadable — a split-brain state.
+    #
+    # Forward-only transitions (ALLOWED_TRANSITIONS) also reject re-entry
+    # into in_progress from done / archived / cancelled. Without an explicit
+    # guard here, set_status returns False on the illegal transition but the
+    # user still sees "✓ Task started" — confusing.
+    existing_data = read_json_strict(task_dir / FILE_TASK_JSON)
+    if existing_data is None:
+        print(colored(
+            f"Error: '{task_dir.name}/task.json' is missing or corrupted; "
+            f"refusing to start. Run 'trellis.py doctor --fix' to repair.",
+            C_RED,
+        ))
+        return 1
+    existing_status = existing_data.get("status")
     if existing_status == "in_progress":
         print(colored(f"Note: '{task_dir.name}' is already in_progress.", C_DIM))
     elif existing_status in ("done", "archived", "cancelled"):
@@ -675,11 +714,16 @@ def _task_start(args: list[str]) -> int:
         ))
         return 1
     elif not set_status(task_dir, "in_progress", when="started"):
+        # Reachable only when the file passed the pre-check but became
+        # unwritable mid-operation (concurrent edit, lost permissions).
+        # Refuse rather than leaving .current-task switched but task.json
+        # unchanged.
         print(colored(
-            f"Warning: {task_dir.name}/task.json missing or corrupted; "
-            f"status not updated. Run 'trellis.py doctor --fix' to repair.",
-            C_YELLOW,
+            f"Error: failed to update '{task_dir.name}/task.json'; "
+            f"refusing to start. Check file permissions and try again.",
+            C_RED,
         ))
+        return 1
 
     # Set as current (only reached for valid transitions / planning tasks)
     rel = f"{TRELLIS_DIR}/{DIR_TASKS}/{task_dir.name}"
@@ -757,15 +801,24 @@ def _task_archive(args: list[str]) -> int:
     if task_dir is None:
         return 1
 
-    # Forward-only transitions (ALLOWED_TRANSITIONS) reject cancelled → archived
-    # (cancelled is terminal). Without this guard, set_status returns False but
+    # F32 + F47: pre-check with read_json_strict to refuse both terminal
+    # (cancelled) and unreadable (missing/corrupted task.json) cases BEFORE
+    # any disk mutation. Without this guard, set_status returns False but
     # shutil.move still physically moves the directory into archive/, producing
-    # a split-brain state: directory is in archive/2026-MM/ but task.json still
-    # reads status=cancelled. The user sees '✓ Task archived' yet task list --all
-    # shows [cancelled], which is confusing. Refuse explicitly with an actionable
-    # pointer so the user knows to either delete --force or start a new task.
+    # a split-brain state: directory is in archive/2026-MM/ but task.json
+    # still reads status=cancelled or is unreadable. The user sees
+    # '✓ Task archived' yet task list --all shows [cancelled] or [?], which
+    # is confusing. Refuse explicitly with an actionable pointer.
     existing = read_json_strict(task_dir / FILE_TASK_JSON)
-    if existing is not None and existing.get("status") == "cancelled":
+    if existing is None:
+        print(colored(
+            f"Refusing to archive: '{task_dir.name}/task.json' is missing or "
+            f"corrupted. Run 'trellis.py doctor --fix' to repair, or "
+            f"'task delete --force {task_dir.name}' to discard.",
+            C_RED,
+        ))
+        return 1
+    if existing.get("status") == "cancelled":
         print(colored(
             f"Refusing to archive: '{task_dir.name}' is cancelled. "
             f"Cancelled is a terminal state (ALLOWED_TRANSITIONS). "
@@ -775,13 +828,16 @@ def _task_archive(args: list[str]) -> int:
         ))
         return 1
 
-    # Update status via the central state-machine helper
+    # Update status via the central state-machine helper. Reachable only
+    # when the file passed the pre-check; the remaining failure modes are
+    # concurrent writes / lost permissions, which we treat as errors.
     if not set_status(task_dir, "archived", when="archived"):
         print(colored(
-            f"Warning: {task_dir.name}/task.json missing or corrupted; "
-            f"archiving the directory but status field left unset.",
-            C_YELLOW,
+            f"Error: failed to update '{task_dir.name}/task.json' "
+            f"before archiving; refusing. Check file permissions.",
+            C_RED,
         ))
+        return 1
 
     # Move to archive
     archive_dir = get_tasks_dir() / DIR_ARCHIVE
@@ -818,13 +874,47 @@ def _task_cancel(args: list[str]) -> int:
     if task_dir is None:
         return 1
 
-    # Update status via the central state-machine helper
-    if not set_status(task_dir, "cancelled", when="cancelled"):
+    # F52: pre-check status before any mutation. set_status itself rejects
+    # archived → cancelled (ALLOWED_TRANSITIONS["archived"] is frozenset())
+    # and refuses on missing/corrupted task.json, but its caller fallback
+    # was "print Warning + continue" — leaving a misleading
+    # "✓ Task cancelled" message while task.json stayed archived, and
+    # clearing `.current-task` even though no transition actually happened.
+    # Refuse explicitly on illegal transitions / unreadable metadata.
+    existing = read_json_strict(task_dir / FILE_TASK_JSON)
+    if existing is None:
         print(colored(
-            f"Warning: {task_dir.name}/task.json missing or corrupted; "
-            f"status not updated. Run 'trellis.py doctor --fix' to repair.",
-            C_YELLOW,
+            f"Refusing to cancel: '{task_dir.name}/task.json' is missing or "
+            f"corrupted. Run 'trellis.py doctor --fix' to repair, or "
+            f"'task delete --force {task_dir.name}' to discard.",
+            C_RED,
         ))
+        return 1
+    cur_status = existing.get("status")
+    if cur_status == "archived":
+        print(colored(
+            f"Refusing to cancel: '{task_dir.name}' is archived. "
+            f"Archived is a terminal state (ALLOWED_TRANSITIONS). "
+            f"Use 'task delete --force {task_dir.name}' to remove it.",
+            C_RED,
+        ))
+        return 1
+    if cur_status == "cancelled":
+        # Idempotent: already cancelled, no-op success. Don't print the
+        # warning that would suggest something went wrong.
+        print(colored(f"Note: '{task_dir.name}' is already cancelled.", C_DIM))
+        return 0
+    # Forward transition (planning/in_progress → cancelled) plus the
+    # explicit reverse (done → cancelled) are both allowed by the state
+    # machine. Delegate to the central helper.
+    if not set_status(task_dir, "cancelled", when="cancelled"):
+        # Reachable only on concurrent-write / lost-permissions races.
+        print(colored(
+            f"Error: failed to update '{task_dir.name}/task.json'; "
+            f"refusing to cancel. Check file permissions and try again.",
+            C_RED,
+        ))
+        return 1
 
     # Clear current if it was this task
     current = get_current_task()
@@ -1280,7 +1370,12 @@ def _check_required_subdirs(tdir: Path, fix: bool, warnings: list[str]) -> None:
             idx = len(warnings) - 1
             print(colored("  ⚠", C_YELLOW), f"{'/'.join(sub)}/ missing")
             if fix:
-                d.mkdir(parents=True, exist_ok=True)
+                # _safe_mkdir unlinks a stray file at the same path so
+                # `doctor --fix` recovers from `.trellis-lite/tasks` etc.
+                # being a file (e.g. partial-install / stray touch). Plain
+                # `mkdir(exist_ok=True)` would raise FileExistsError on
+                # Python 3.12+.
+                _safe_mkdir(d)
                 print(colored("    ↳", C_DIM), f"created {d}")
                 warnings.pop(idx)
         else:
@@ -1299,7 +1394,13 @@ def _check_workspace_dir(fix: bool, warnings: list[str]) -> Path | None:
         warnings.append(f"workspace/{dev} missing")
         print(colored("  ⚠", C_YELLOW), f"workspace/{dev} missing")
         if fix:
-            workspace.mkdir(parents=True, exist_ok=True)
+            # _safe_mkdir unlinks a stray file at this workspace path so
+            # `doctor --fix` recovers when the workspace path is a regular
+            # file (e.g. stray touch, partial git sync of a half-initialised
+            # state). Previously `mkdir(exist_ok=True)` raised FileExistsError
+            # on Python 3.12+ and surfaced as a raw traceback — defeating
+            # the repair tool that F44's cmd_session error message points at.
+            _safe_mkdir(workspace)
             print(colored("    ↳", C_DIM), f"created {workspace}")
             warnings.pop()
     # Check journal exists (only meaningful now that workspace may have been created)

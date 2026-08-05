@@ -107,6 +107,38 @@ has_platform() {
     [[ "$PLATFORMS" = "all" || ",$PLATFORMS," = *",$p,"* ]]
 }
 
+# --- F50: rollback on partial-install failure ---
+#
+# If any step after we've started writing to the target fails (Python missing,
+# permission denied, Python 3 < 3.9), `set -e` aborts. Without cleanup, the
+# target is left with .trellis-lite/, AGENTS.md, CLAUDE.md, .clinerules/
+# already copied but not initialised — re-running install.sh then silently
+# skips the copies (line 116 detects existing .trellis-lite/) and the user
+# is stuck with a broken state they have to rm -rf manually.
+#
+# Fix: track every file/dir we touch in INSTALLED_FILES and clean them up
+# via `trap ERR` if anything fails mid-install. The trap is reset to nothing
+# once init succeeds so the rest of the script (gitignore + pre-commit hook)
+# can run without rollback semantics.
+INSTALLED_FILES=()
+rollback() {
+    local exit_code=$?
+    if [ ${#INSTALLED_FILES[@]} -eq 0 ]; then
+        return $exit_code
+    fi
+    echo "" >&2
+    echo -e "${RED}✗ Install failed (exit $exit_code) — rolling back partial state${NC}" >&2
+    for f in "${INSTALLED_FILES[@]}"; do
+        if [ -e "$f" ]; then
+            rm -rf "$f"
+            echo -e "  ${RED}removed${NC} $f" >&2
+        fi
+    done
+    echo -e "${YELLOW}Re-run ./install.sh after fixing the cause (e.g. install Python 3.9+).${NC}" >&2
+    exit $exit_code
+}
+trap rollback ERR
+
 # --- 1. Copy .trellis-lite/ ---
 
 SRC_TRELLIS="${SCRIPT_DIR}/.trellis-lite"
@@ -118,6 +150,7 @@ if [ -d "$DST_TRELLIS" ]; then
 else
     echo -e "${GREEN}→ Copying .trellis-lite/ ...${NC}"
     cp -r "$SRC_TRELLIS" "$DST_TRELLIS"
+    INSTALLED_FILES+=("$DST_TRELLIS")
     # Remove runtime-only files that may linger in the template copy
     # (.current-task, .developer, __pycache__). init below recreates .developer.
     rm -f "${DST_TRELLIS}/.current-task" "${DST_TRELLIS}/.developer"
@@ -140,6 +173,7 @@ if has_platform "qoder" || has_platform "opencode"; then
     else
         echo -e "${GREEN}→ Installing AGENTS.md (Qoder / OpenCode) ...${NC}"
         cp "$SRC_AGENTS" "$DST_AGENTS"
+        INSTALLED_FILES+=("$DST_AGENTS")
     fi
     if has_platform "qoder"; then
         INSTALLED_PLATFORMS+=("Qoder")
@@ -159,6 +193,7 @@ if has_platform "claude"; then
     else
         echo -e "${GREEN}→ Installing CLAUDE.md (Claude Code) ...${NC}"
         cp "$SRC_CLAUDE" "$DST_CLAUDE"
+        INSTALLED_FILES+=("$DST_CLAUDE")
     fi
     INSTALLED_PLATFORMS+=("Claude Code")
 fi
@@ -172,6 +207,7 @@ if has_platform "cline"; then
     else
         echo -e "${GREEN}→ Creating .clinerules/ (Cline) ...${NC}"
         mkdir -p "$DST_CLINERULES"
+        INSTALLED_FILES+=("$DST_CLINERULES")
     fi
 
     # Write Cline rule file (same content as AGENTS.md, Cline reads .clinerules/*.md)
@@ -182,6 +218,7 @@ if has_platform "cline"; then
         echo -e "${GREEN}→ Installing .clinerules/trellis-lite.md (Cline) ...${NC}"
         # Copy AGENTS.md content (Cline doesn't support @import)
         cp "${SCRIPT_DIR}/AGENTS.md" "$DST_CLINE_RULE"
+        INSTALLED_FILES+=("$DST_CLINE_RULE")
     fi
     INSTALLED_PLATFORMS+=("Cline")
 fi
@@ -204,6 +241,12 @@ if [ -f "${DST_TRELLIS}/.developer" ]; then
 else
     python3 "${DST_TRELLIS}/scripts/trellis.py" init "$DEV_NAME"
 fi
+
+# init succeeded (or was skipped because .developer already exists).
+# Disable rollback: any subsequent failure should NOT remove files we
+# successfully wrote, since the user can still manually fix the remaining
+# steps (gitignore, pre-commit hook) after.
+trap - ERR
 
 echo ""
 echo -e "${GREEN}✓ Trellis Lite installed!${NC}"

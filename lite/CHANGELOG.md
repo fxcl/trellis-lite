@@ -64,6 +64,28 @@
 
 ---
 
+### 修复（第 7 轮 oracle-reviewer）
+
+**核心模式：所有 mutating commands（`task start` / `task archive` / `task cancel`）现在用 `read_json_strict` 预检 task.json 状态，对 missing/corrupted 元数据显式拒绝。F46-F52 修复了第 6 轮修复遗漏的姊妹 case 与 broken promise。**
+
+- **`doctor --fix` 在 `workspace/<dev>` 是 regular file 时不再 traceback（F46）**：之前 `mkdir(parents=True, exist_ok=True)` 在文件路径上抛 `FileExistsError`（Python 3.12+），raw traceback 让 `cmd_session` 的 "Run 'trellis.py doctor --fix' to repair" 推荐路径自身崩溃。**这是 F44 修复的 broken promise**。新行为：新增 `_safe_mkdir()` helper 检测并 unlink 同路径的 stray file，再 mkdir；推广到 `_check_required_subdirs`（3 个子目录）+ `_check_workspace_dir`，共 4 处修复。新增 2 个 doctor 测试覆盖 workspace 和 spec/ 两种 stray-file 场景。
+- **`task start` 在 `task.json` 损坏时拒绝切换 `.current-task`（F48）**：F27 修了 `done/archived/cancelled` 已知 status，但 corrupted task.json 时 `read_json` 返 `{}`，fall through 到 `set_status` 失败后**仍**执行 `set_current_task` + 打印 "✓ Task started"，造成 split-brain（指针指向元数据不可读的任务）。新行为：用 `read_json_strict` 预检，missing/corrupted 时报 `Error: '.../task.json' is missing or corrupted; refusing to start.` + exit 1，不切换 `.current-task`。新增 1 个 test 覆盖。
+- **`task archive` 在 `task.json` 损坏时拒绝归档（F47）**：F32 修了 `cancelled` 状态，但 corrupted task.json 时仍打 warning + 执行 `shutil.move` 到 `archive/`，产生 orphan archived task（`task list --all` 显示 `[?]`）。新行为：`read_json_strict` 预检，missing/corrupted 时报 `Refusing to archive: '.../task.json' is missing or corrupted.` + exit 1，目录不移动。fallback 分支同步改为 hard-error（避免 set_status mid-operation 失败时的 silent split-brain）。新增 1 个 test 覆盖。
+- **`task cancel` 现在显式拒绝取消已 archived 任务（F52）**：之前 `archived → cancelled` 违反 ALLOWED_TRANSITIONS（archived 是 terminal），但 `_task_cancel` 只看到 `set_status` 返回 `False` 就报**误导性** "missing or corrupted" warning + 清除 `.current-task` + 打印 "✓ Task cancelled"，task.json 仍 archived。新行为：`read_json_strict` 预检，archived 时报 `Refusing to cancel: '...' is archived. Archived is a terminal state...` + exit 1，指针不清理；已 cancelled 任务改为 idempotent note（不再打误导 warning）；corrupted task.json 同样拒绝。fallback 分支同步改为 hard-error。新增 2 个 test 覆盖 archived + corrupted。
+- **`install.sh` 部分安装失败时自动 rollback（F50）**：之前 `set -e` 在 init 失败（Python 缺失 / 权限拒绝 / Python 3 < 3.9）时立即退出，但 `.trellis-lite/` + `AGENTS.md` + `CLAUDE.md` + `.clinerules/trellis-lite.md` 已写入 target，**无 cleanup**。重跑 install.sh 时 `if [ -d "$DST_TRELLIS" ]` 检测到 partial state 静默跳过 cp，用户卡在 broken state 需手动 `rm -rf`。新行为：跟踪 `INSTALLED_FILES` 数组，setup `trap rollback ERR`，init 失败时自动清理所有已安装文件；init 成功（即使后续 gitignore / hook 步骤失败）则 `trap - ERR` 关闭 rollback（不清理已成功部分，给用户手动修复机会）。
+
+### 文档（第 7 轮 oracle-reviewer）
+
+- `architecture-review.md` 第 7 轮新增：F46-F52 修复记录；F50 install.sh rollback 设计 rationale。
+
+### 测试
+- `tests/test_doctor.py` 新增 2 个测试（`test_doctor_fix_recovers_from_file_workspace` + `test_doctor_fix_recovers_from_file_subdir`）覆盖 `_safe_mkdir` 路径。
+- `tests/test_task.py` 新增 4 个测试（`test_start_rejects_corrupted_task_json` / `test_archive_rejects_corrupted_task_json` / `test_cancel_rejects_archived_terminal_state` / `test_cancel_rejects_corrupted_task_json`）覆盖 F47/F48/F52。
+- 手工烟测覆盖 4 个 P1 修复 + install.sh rollback 路径（happy path + Python 失败 path）。
+- 测试总数 131 → **137**（+6），全部通过；loc 1442 → 1543（+101，含 helper + 注释 + 测试）。
+
+---
+
 ## [0.6.9] - 2026-07-26
 
 ### 新增

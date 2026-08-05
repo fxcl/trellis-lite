@@ -149,5 +149,37 @@ class TestDoctor(unittest.TestCase):
         self.assertIn("orphan", r.stdout)
 
 
+
+    def test_doctor_fix_recovers_from_file_workspace(self) -> None:
+        """F46: when workspace/<dev> is a regular file (stray touch), `doctor --fix`
+        must unlink the file and recreate the directory instead of tracebacking.
+        Previously `mkdir(exist_ok=True)` raised FileExistsError on Python 3.12+."""
+        ws = self.h.tmpdir / ".trellis-lite/workspace/tester"
+        shutil.rmtree(ws, ignore_errors=True)
+        ws.write_text("not a directory\n", encoding="utf-8")
+        self.assertTrue(ws.is_file())
+        r = self._run(["doctor", "--fix"])
+        self.assertEqual(r.returncode, 0, f"doctor --fix failed: {r.stdout}\n{r.stderr}")
+        # workspace should now be a real directory
+        self.assertTrue(ws.is_dir(), "workspace should be recreated as a directory")
+        self.assertIn("created", r.stdout)
+        # No traceback in output
+        combined = r.stdout + r.stderr
+        self.assertNotIn("Traceback", combined)
+
+    def test_doctor_fix_recovers_from_file_subdir(self) -> None:
+        """F46: same recovery pattern for required subdirs (tasks/, spec/, archive/)."""
+        spec_dir = self.h.tmpdir / ".trellis-lite/spec"
+        shutil.rmtree(spec_dir, ignore_errors=True)
+        spec_dir.write_text("stray file\n", encoding="utf-8")
+        self.assertTrue(spec_dir.is_file())
+        r = self._run(["doctor", "--fix"])
+        self.assertEqual(r.returncode, 0, f"doctor --fix failed: {r.stdout}\n{r.stderr}")
+        self.assertTrue(spec_dir.is_dir(), "spec/ should be recreated as a directory")
+        combined = r.stdout + r.stderr
+        self.assertNotIn("Traceback", combined)
+        self.assertNotIn("FileExistsError", combined)
+
+
 if __name__ == "__main__":
     unittest.main()

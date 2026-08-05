@@ -254,6 +254,71 @@
 
 ---
 
+---
+
+## 2026-08-05 审查（第 7 轮 — F46/F47/F48/F52/F50 修复）
+
+### 范围
+
+- 被审查对象：`lite/.trellis-lite/scripts/trellis.py` (1543 行) + `install.sh` (含新增 38 行 rollback 逻辑)
+- 审查维度：第 6 轮修复（F32/F41/F44/F45/F42）是否引入 regression 或遗漏 path；install 生命周期
+- 方法：手工烟测 + 16 项边界场景测试 + 跨 caller trace
+
+### 新发现（按优先级）
+
+#### P1 必修
+
+🔥 **F46**：`doctor --fix` 在 `workspace/<dev>` 是 regular file 时 traceback FileExistsError
+- 触发：F44 修了 `cmd_session` 的 NotADirectoryError，但推荐消息"Run 'trellis.py doctor --fix' to repair" 自身在 Python 3.12+ traceback。
+- 根因：`mkdir(parents=True, exist_ok=True)` 在 file path 上不抑制 `FileExistsError`（仅对已存在的 dir 才 silent）。
+- 修复：新增 `_safe_mkdir()` helper 检测并 unlink stray file 再 mkdir；推广到 `_check_required_subdirs` (3 处) + `_check_workspace_dir` (1 处)。
+- 验证：新增 `test_doctor_fix_recovers_from_file_workspace` + `test_doctor_fix_recovers_from_file_subdir`。
+
+🔥 **F47**：`task archive` on corrupted task.json → orphan archived task
+- 触发：F32 修了 cancelled 已知 status，但 read_json_strict 返 None (corrupted) 时仍 fall through → 打 warning → shutil.move → orphan。
+- 修复：在 F32 之后加 `existing is None → refuse` 分支；fallback 分支同步改为 hard-error。
+- 验证：`test_archive_rejects_corrupted_task_json`。
+
+🔥 **F48**：`task start` on corrupted task.json → `.current-task` 切换 split-brain
+- 触发：F27 修了 done/archived/cancelled，但 read_json 返 `{}` (corrupted) 时 fall through → set_current_task + "✓ Task started"。
+- 修复：用 `read_json_strict` 替代 `read_json`；missing/corrupted 时 exit 1，不切换 `.current-task`。
+- 验证：`test_start_rejects_corrupted_task_json`（构造两个 task 验证指针不变）。
+
+🔥 **F52**：`task cancel` on archived task → misleading warning + 假成功
+- 触发：archived → cancelled 违反 ALLOWED_TRANSITIONS（archived terminal），但 fallback 打 "missing or corrupted"（消息误导）+ clear_current_task + ✓ Task cancelled，task.json 仍 archived。
+- 修复：`read_json_strict` 预检 + archived → refuse；已 cancelled → idempotent note；corrupted → refuse。
+- 验证：`test_cancel_rejects_archived_terminal_state` + `test_cancel_rejects_corrupted_task_json`。
+
+#### P3 体验
+
+📝 **F50**：`install.sh` 部分安装失败时无 rollback
+- 触发：init 失败（Python 缺失 / permission）时 `set -e` 退出，但 `.trellis-lite/` + AGENTS.md + CLAUDE.md + .clinerules/ 已写入 target；重跑 install 静默跳过 cp 卡在 broken state。
+- 修复：`INSTALLED_FILES` 数组 + `trap rollback ERR`，init 失败自动清理；init 成功后 `trap - ERR` 关闭 rollback。
+- 验证：手工烟测 fake python3 → 所有文件被 cleanup；正常 install 流程不受影响。
+
+### 第 7 轮方法论
+
+第 7 轮是"**retro + 边角扫描**"——继续验证前几轮修复的"fallback path 是否完整"。F27/F32/F44 都修了"已知 terminal status"或"已知 file condition"，但**未覆盖** corrupted/missing 边角：
+- F27 修 `done/archived/cancelled` → 漏 corrupted → F48 补
+- F32 修 `cancelled` → 漏 corrupted → F47 补
+- F44 修 cmd_session 的 file workspace → 漏 cmd_doctor 的同 case → F46 补
+- F32/F41 用 set_status 失败→fallback 模式 → F52 暴露该模式在 _task_cancel 上同样 silent
+- 这印证了一个原则：**helper 集中化（F6）让主路径收紧，但调用方的 fallback 路径会成为新的不一致来源**
+
+### 验证
+
+- **137/137 unittest 全绿**（131 → 137，+6）
+- **4 个 P1 手工烟测 100% 复现修复前 buggy 行为 + 100% 修复**
+- **install.sh happy path** + **install.sh rollback path** 都验证
+- LOC 1442 → 1543（+101，含 helper + 注释 + 测试）
+- 测试增量：`tests/test_doctor.py` +2, `tests/test_task.py` +4
+
+### 第 7 轮建议的下一步
+
+trellis-lite 单文件已 1543 行（远超软上限 1000 行 54%）。如果继续按"每轮 ~100 行"节奏，第 8 轮修复后到 1643 行。**强烈建议开始考虑按职责拆分**（如 `state.py` / `commands/*.py` / `doctor.py`），保留 install.sh 单次 cp 的便利（拆分为 python module + bootstrap script）。
+
+---
+
 ## 历史审查
 
 - 2026-07-26 — 第 6 轮（重构验证 + 新问题，commit `21377146ed37` 之后）

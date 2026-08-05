@@ -387,3 +387,100 @@ class TestTaskLifecycle(unittest.TestCase):
         self.assertIn("Refusing to delete", r.stdout)
         # Tip must NOT appear since .current-task points to 's', not 'f'.
         self.assertNotIn("Tip", r.stdout)
+
+    def test_start_rejects_corrupted_task_json(self) -> None:
+        """F48: starting a task with missing/corrupted task.json must refuse
+        cleanly (exit 1, red error) instead of falling through to set_current_task
+        + "✓ Task started". Previously left `.current-task` pointing at an
+        unreadable task (split-brain)."""
+        # Build two tasks so we can observe whether .current-task switches.
+        # Task "good" is the active baseline; "bad" is the one we will corrupt.
+        self.h.run(["task", "create", "Good", "--slug", "good"])
+        self.h.run(["task", "start", "good"])
+        # Finish releases the active pointer so we can create another task.
+        self.h.run(["task", "finish"])
+        self.h.run(["task", "create", "Bad", "--slug", "bad"])
+        from ._helpers import find_task
+        bad = find_task(self.h.tmpdir, "bad")
+        (bad / "task.json").write_text("garbage not json", encoding="utf-8")
+        # .current-task now points at "bad" (set by task create).
+        # We want to verify that after a refused start, .current-task has NOT
+        # been moved to a different state and that no "Task started" line
+        # was emitted. (Pre-F48 the corrupted task.json would have been
+        # accepted with a Warning and "Task started" line.)
+        ct_path = self.h.tmpdir / ".trellis-lite/.current-task"
+        before = ct_path.read_text() if ct_path.exists() else ""
+        r = self.h.run(["task", "start", "bad"])
+        self.assertNotEqual(r.returncode, 0, "corrupted task.json must refuse start")
+        self.assertIn("missing or corrupted", r.stdout)
+        self.assertIn("refusing to start", r.stdout)
+        self.assertNotIn("Task started", r.stdout)
+        # Pointer must not have been cleared by a refused start
+        after = ct_path.read_text() if ct_path.exists() else ""
+        self.assertEqual(before, after, ".current-task pointer must be unchanged after refused start")
+
+    def test_archive_rejects_corrupted_task_json(self) -> None:
+        """F47: archiving a task with corrupted task.json must refuse (exit 1)
+        instead of moving the directory to archive/ and leaving an unreadable
+        task.json there (orphan)."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        task_dir = self.h.tmpdir / ".trellis-lite/tasks"
+        d = None
+        for x in task_dir.iterdir():
+            if x.is_dir() and x.name != "archive":
+                d = x
+                break
+        assert d is not None
+        (d / "task.json").write_text("garbage", encoding="utf-8")
+        r = self.h.run(["task", "archive", "t"])
+        self.assertNotEqual(r.returncode, 0, "corrupted task.json must refuse archive")
+        self.assertIn("missing or corrupted", r.stdout)
+        self.assertIn("Refusing to archive", r.stdout)
+        self.assertNotIn("Task archived", r.stdout)
+        # Directory must still be under tasks/ (not moved to archive/)
+        self.assertTrue(d.is_dir(), "task dir must not have moved")
+        archive_dir = task_dir / "archive"
+        self.assertFalse(
+            any(archive_dir.rglob(d.name)),
+            "no copy should have been moved to archive/",
+        )
+
+    def test_cancel_rejects_archived_terminal_state(self) -> None:
+        """F52: cancelling an already-archived task must refuse explicitly.
+        Previously: warning "missing or corrupted" (misleading) + clear pointer
+        + "✓ Task cancelled" while task.json stayed archived (split-brain)."""
+        task_dir = self.h.tmpdir / ".trellis-lite/tasks/MM-DD-archived"
+        task_dir.mkdir(parents=True)
+        (task_dir / "task.json").write_text(
+            '''{"title": "a", "slug": "a", "status": "archived", "created": "2026-08-05T00:00:00"}
+''',
+            encoding="utf-8",
+        )
+        r = self.h.run(["task", "cancel", "MM-DD-archived"])
+        self.assertNotEqual(r.returncode, 0, "cancel on archived must refuse")
+        self.assertIn("Refusing to cancel", r.stdout)
+        self.assertIn("archived", r.stdout.lower())
+        self.assertIn("terminal state", r.stdout)
+        self.assertNotIn("Task cancelled", r.stdout)
+        import json as _json
+        status = _json.loads((task_dir / "task.json").read_text())["status"]
+        self.assertEqual(status, "archived", "status must not have changed")
+
+    def test_cancel_rejects_corrupted_task_json(self) -> None:
+        """F52: cancelling a task with corrupted task.json must refuse cleanly."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        task_dir = self.h.tmpdir / ".trellis-lite/tasks"
+        d = None
+        for x in task_dir.iterdir():
+            if x.is_dir() and x.name != "archive":
+                d = x
+                break
+        assert d is not None
+        (d / "task.json").write_text("garbage", encoding="utf-8")
+        r = self.h.run(["task", "cancel", "t"])
+        self.assertNotEqual(r.returncode, 0, "corrupted task.json must refuse cancel")
+        self.assertIn("missing or corrupted", r.stdout)
+        self.assertIn("Refusing to cancel", r.stdout)
+        self.assertNotIn("Task cancelled", r.stdout)
+
+
