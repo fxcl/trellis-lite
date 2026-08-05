@@ -1,12 +1,14 @@
 # Trellis Lite — 最佳实践指南
 
-> 基于 4 轮审查沉淀 + 1330 行实现 + 116 个测试覆盖的实战经验。
+> 基于 5+ 轮 oracle-reviewer 审查沉淀 + 1330 行实现 + 123 个 unittest 覆盖的实战经验。
 >
 > 配套文档：
 > - [README.md](../README.md) — 快速上手
 > - [design.md](design.md) — 设计原理与架构
 > - [usage-guide.md](usage-guide.md) — 完整使用示例
 > - [workflow-checklist.md](workflow-checklist.md) — 任务级 checklist（可复制）
+> - [exit-codes.md](exit-codes.md) — 退出码语义与可逆性原则
+> - [architecture-review.md](architecture-review.md) — 架构审查记录与债务清单
 > - [workflow.md](../.trellis-lite/workflow.md) — AI 行为规范
 
 ---
@@ -47,7 +49,26 @@ cat .trellis-lite/workspace/yourname/journal-1.md  # 应有 # Journal 1
 
 # 2. 跑一次 context 看输出
 python3 .trellis-lite/scripts/trellis.py context
+
+# 3. 跑 doctor 全面自检（详见第七节）
+python3 .trellis-lite/scripts/trellis.py doctor
 ```
+
+### 重装语义（O16）
+
+`install.sh` 是**幂等**的。重复运行到同一目录不会覆写已有状态：
+
+| 已有工件 | 重装行为 |
+|---|---|
+| `.trellis-lite/` 目录 | **跳过 cp**（使用现有；不会同步新模板） |
+| `.trellis-lite/.developer` | **跳过 init**（输出 `Note: .developer already set to '...'`） |
+| `AGENTS.md` / `CLAUDE.md` / `.clinerules/trellis-lite.md` | **跳过 cp**（保留用户编辑过的版本） |
+| `.gitignore` runtime 条目 | **跳过添加**（grep 检测已存在） |
+| `.git/hooks/pre-commit` | **跳过 cp**（保留旧 hook） |
+
+**结论**：install 只在"目标未安装"时执行初始化动作。需要重新 init、改 dev name、刷新模板、迁移到新版本时，先 `uninstall.sh .` 再 `install.sh . <name>` —— **不要期望重装会"修复"任何东西**。
+
+如果只是想检查健康状态：`doctor [--fix]`（详见第七节）。
 
 ---
 
@@ -267,7 +288,252 @@ python3 .trellis-lite/scripts/trellis.py session \
 
 ---
 
-## 六、Sub-agent 分发：什么时候该用
+## 六、状态机与生命周期（必读）
+
+任务状态机是 Lite 最容易踩坑的部分，因为它不仅是"状态转换"，还有**幂等性、时间戳、活跃指针**三重语义。
+
+### 6.1 5 态状态机
+
+```
+planning ──(task start)──→ in_progress ──(task finish)──→ done ──(task archive)──→ archived
+     │                         │                                                    │
+     │                         │                                                    │
+     └─────────────────────────┴───────────────── 也可以直接 archive（跳过 finish）──┘
+
+planning / in_progress ──(task cancel)──→ cancelled（目录保留，不归档）
+done ──(task cancel)──→ cancelled（允许“改主意”，是设计上唯一允许的反向转移）
+```
+
+完整转换表（来源：`trellis.py` 中的 `ALLOWED_TRANSITIONS` 常量）：
+
+| 起始状态 | 允许转移目标 |
+|---|---|
+| `planning` | `in_progress`, `done`, `archived`, `cancelled` |
+| `in_progress` | `done`, `archived`, `cancelled` |
+| `done` | `archived`, `cancelled` |
+| `archived` | （终态） |
+| `cancelled` | （终态） |
+
+**关键约束**：
+- **Forward-only**：除了 `done → cancelled` 这一你“改主意”场景，不能回滚
+- **终端状态不可转移**：`archived` 和 `cancelled` 是永久状态
+- **跨期转移会被拒绝**：调用 `set_status()` 返回 `False` + 输出 Warning
+
+### 6.2 set_status 幂等性
+
+`set_status(task_dir, new_status)` 遵循幂等原则：
+
+- **同一状态重复调用** → 返回 `True`，**不重写文件、不更新时间戳**
+- **合法转移** → 返回 `True`，更新时间戳
+- **非法转移 / 缺失文件 / 损坏 JSON / 空数据** → 返回 `False`，**不写任何东西**
+
+这意味着以下脚本是安全的：
+
+```bash
+# 在 CI / hook 里重复调用不会产生副作用
+python3 trellis.py task start my-task     # 首次：transfer planning → in_progress
+python3 trellis.py task start my-task     # 幂等：返回 True，不重写 started 时间戳
+```
+
+### 6.3 时间戳约定（不要手动改 task.json）
+
+`task.json` 中的时间戳对应**触发该状态转移的事件**：
+
+| 字段 | 何时写入 | 何时不存在是正确 |
+|---|---|---|
+| `created` | `_task_create`（永不变） | — |
+| `started` | 首次 `task start` | `planning` 任务**不有**（未开始，不是漏字段） |
+| `finished` | `task finish` | `planning` / `in_progress` / `cancelled` 任务**不有** |
+| `archived` | `task archive` | 仅 `archived` 任务上有 |
+| `cancelled` | `task cancel` | 仅 `cancelled` 任务上有 |
+
+> 判断“task.json 是否被人手动改过”的最快方法：看 `started` 是否在 `planning` 上存在。如果有，则可能被人工改了 —— `doctor` 会报 Warning。
+
+### 6.4 One Task at a Time
+
+`task create` 遵循硬规则：
+
+```bash
+# 如果已有活跃任务，create 默认拒绝 + exit 1（不创建文件夹）
+$ python3 trellis.py task create "新功能"
+Refusing to create: '08-04-login' is still the active task. Run 'task finish' or 'task cancel' first, or pass --replace to take over.
+
+# 显式接管：
+$ python3 trellis.py task create "新功能" --replace
+Note: replaced active task '08-04-login' with '08-04-new-feature'.
+```
+
+**反面**：多个 `in_progress` 并存会导致 `task finish` 只清一个活跃指针，其他任务“丢了但看不到”。**限制是你必须明确主动。**
+
+### 6.5 任务生命周期决策树
+
+```
+任务结束 ?
+├─ 完成了 → task finish（状态 done） → task archive（进 archive/YYYY-MM/）
+│                                              └─ 写 session journal
+├─ 不想做了 → task cancel <name>（状态 cancelled，目录保留）
+│               └─ 写 session journal（说明为什么取消）
+└─ 目录没用了 → task cancel + task delete --force（永久删除）
+
+需要清理磁盘：
+└─ task list --all 查看所有（含 archived）
+└─ 手动 rm -rf tasks/archive/YYYY-MM/<name>（已 archived 的任务是可丢弃的）
+```
+
+### 6.6 清理路径（task delete）
+
+`task delete <name> [--force]` 是 0.6.9 新增的“硬删除”命令：
+
+- 默认只允许删除 `cancelled` 状态（防止误删仍在运行的）
+- `--force` 跳过状态检查
+- 删除前会清除 `.current-task` 指针（如果指向该任务）
+- **不可逆** —— deleted 后无法恢复，但 session journal 中仍记录了 commit hash 可追溯
+
+---
+
+## 七、退出码语义（可逆性原则）
+
+Lite 的退出码遵循一条原则：**不可逆操作失败必须中止（return 1）；可恢复操作失败可以降级继续（return 0 + Warning）**。
+
+完整退出码表详见 [exit-codes.md](exit-codes.md)。以下是几个关键不对称设计：
+
+### 7.1 task finish 严格 vs task start/archive/cancel 宽松
+
+| 命令 | task.json 损坏时行为 | 返回码 | 原理 |
+|---|---|---|---|
+| `task finish` | **拒绝、活跃指针不变** | 1 | finish 后调 `clear_current_task()` —— 指针丢失不可逆 |
+| `task start` | 调 set_status 返 False → 输出 Warning | 0 | 指针设置、状态没改都是可恢复的 |
+| `task archive` | 移动目录 + Warning | 0 | 即使 status 没写入，目录移动本身就是状态表达 |
+| `task cancel` | 写 cancelled 失败 → Warning | 0 | 目录保留，用户可手动修复 task.json |
+
+**使用示例**：
+
+```bash
+# 安全管道：finish 失败明确中止脚本
+set -e
+python3 trellis.py task finish || { echo "active task missing — abort"; exit 1; }
+
+# start 失败可降级：Warning 但继续（你可能只是手快重复了）
+python3 trellis.py task start my-task   # 即使重复调用也安全
+```
+
+### 7.2 查询类命令总是返 0
+
+`task list` / `task current` / `specs` / `context` 在“空状态”时返 0：
+
+```bash
+# 无任务不是错误 —— 与 git/ls/find 一致
+if python3 trellis.py task list | grep -q "$NAME"; then
+    echo "task exists"
+fi
+```
+
+**不要**把这些命令作为 CI 闸门用 —— 如果需要"有任务才跑"，用输出内容判断而非退出码。
+
+---
+
+## 八、doctor 自检与自愈
+
+`doctor [--fix]` 是 Lite 的“体检 + 治疗”工具。**项目状态不正常时第一个该跑的命令**。
+
+### 8.1 9 项检查
+
+```
+1. .trellis-lite/ 存在？否则 doctor 早退
+2. .developer 文件存在且含 name=... 行
+3. tasks/, tasks/archive/, spec/ 三个子目录都存在
+4. workspace/<dev>/ 存在 + 至少 1 个 journal-N.md
+5. .current-task 指针指向的目录存在（不被清理时则指向丢失）
+6. tasks/*/ 下的 task.json 都不丢失（不是孤儿目录）
+7. journal 编号从 1 开始且无 gap
+8. Python ≥ 3.9
+9. 脏文件数（仅 informational，不返非零）
+```
+
+### 8.2 --fix 模式
+
+`--fix` 会自动修复大部分 Warning（不能修复 problems）：
+
+- 补齐丢失的子目录
+- 创建 workspace 和首个 journal
+- 清理指向丢失目录的 `.current-task` 指针
+- 补默认 developer=developer（仅当完全缺失）
+
+**不会自动修复**：
+- `task.json` 损坏（需要人判断）
+- journal 编号 gap（可能是你手动删的）
+
+### 8.3 使用场景
+
+```bash
+# 每天早上：早上提醒“项目状态是否健康”
+python3 trellis.py doctor
+
+# 遇到不可解释的 bug：可能是状态损坏
+python3 trellis.py doctor --fix
+
+# pre-commit hook 自动跑（安装时提供）
+# hook 失败 → commit 被拒绝 → 提示你跑 doctor --fix
+```
+
+**反面**：手动 rm -rf `.trellis-lite/tasks/`，期望 doctor 恢复任务内容 —— **不行**，doctor 只能修复指针与目录，不能恢复已删的 task.json。
+
+---
+
+## 九、install/uninstall 生命周期
+
+`install.sh` 与 `uninstall.sh` 必须作为一对使用。**install 创建的每个工件，uninstall 都能清理**。
+
+### 9.1 install 创建什么
+
+| 工件 | 触发条件 |
+|---|---|
+| `.trellis-lite/` 目录 | 始终 |
+| `.trellis-lite/.developer` | init 阶段（仅首次安装） |
+| `AGENTS.md` | `--platforms qoder/opencode/all`（仅首次） |
+| `CLAUDE.md` | `--platforms claude/all`（仅首次） |
+| `.clinerules/trellis-lite.md` | `--platforms cline/all`（仅首次） |
+| `.gitignore` runtime 块 | 目标存在 .gitignore（仅首次） |
+| `.git/hooks/pre-commit` | 目标存在 `.git/`（仅首次） |
+
+### 9.2 uninstall 清理什么
+
+- `.trellis-lite/` 整个目录（递归）
+- `AGENTS.md` / `CLAUDE.md`（如果存在）
+- `.clinerules/trellis-lite.md`（如果存在）+ 空目录 rmdir
+- `.gitignore` 中的 Trellis 块（`# Trellis Lite runtime` marker + 下属 runtime 条目）
+- `.git/hooks/pre-commit`（**仅当包含 "Trellis Lite" 字符串**，否则不动）
+
+### 9.3 关键设计点
+
+- **不覆盖用户的 hook**：uninstall 只删含 marker 的 hook
+- **不覆盖用户的 .gitignore 行**：awk 状态机只在 `# Trellis Lite runtime` marker 块内删除 `.trellis-lite/.X` 条目，用户内容跨用户行保留
+- **marker 镋定**：grep 使用 `-qxF` 镋定整行 + 字面匹配，散文中提到 “Trellis Lite runtime” 不会误触发清理
+- **退出安全**：mktemp 临时文件在 EXIT trap 中清理，即使 awk 失败也不会残留 /tmp
+
+### 9.4 完整生命周期演示
+
+```bash
+# 全新安装
+cd ~/projects/my-app
+/path/to/lite/install.sh . myname
+python3 .trellis-lite/scripts/trellis.py context       # 验证
+
+# 升级到新版 trellis-lite
+cd /path/to/lite && git pull
+cd ~/projects/my-app
+/path/to/lite/uninstall.sh . && /path/to/lite/install.sh . myname
+
+# 平时只想检查状态（不需要重装）
+python3 .trellis-lite/scripts/trellis.py doctor
+
+# 误装想全部回退
+/path/to/lite/uninstall.sh .    # 清理所有 Trellis 工件
+```
+
+---
+
+## 十、Sub-agent 分发：什么时候该用
 
 ### 决策树
 
@@ -328,13 +594,13 @@ Active task: {trellis_current}
 
 ---
 
-## 七、4 个最容易踩的坑
+## 十一、7 个最容易踩的坑
 
-> 这些坑来自 25 项实战修复记录。每一项都已内置到 Lite 行为中——但你仍可能绕开。
+> 这些坑来自 25+ 项实战修复记录。每一项都已内置到 Lite 行为中——但你仍可能绕开。
 
 ### 坑 1：spec 不写 → 同样 bug 反复出现
 
-**症状**：每 3 个任务 AI 都要重新问"项目用什么 ORM？"
+**症状**：每 3 个任务 AI 都要重新问“项目用什么 ORM？”
 
 **修法**：第一次确定后立刻写 spec。下次就一劳永逸。
 
@@ -359,18 +625,40 @@ Active task: {trellis_current}
 
 **修法**：每个任务完成就**立刻** < 1 分钟写个 session。**未来你会感谢现在的自己**。
 
+### 坑 5：期待 `install.sh` 重装会“修复”状态
+
+**症状**：在老版本装的仓库上跑新版 `install.sh`，期望 dev name 被更新、模板被同步、hook 被升级。什么也没发生。
+
+**修法**：重装是幂等跳过语义（详见第一节），不是“修复”。要全新初始化：先 `uninstall.sh .` 再 `install.sh . <name>`。要检查状态：跑 `doctor`。
+
+### 坑 6：以为 `task finish` 丢了数据是工具的错
+
+**症状**：`task finish` 返回 1，活跃指针还在，状态没变 —— 你以为工具坏了。
+
+**修法**：**这正是设计意图**。`task finish` 在 task.json 损坏时会拒绝执行，因为它后续会调 `clear_current_task()` 清空活跃指针 —— 指针丢失不可逆。同样场景下 `task start` / `archive` / `cancel` 会返 0 + Warning（因为可恢复）。详见第七节“退出码语义”。
+
+### 坑 7：在散文中提到 “Trellis Lite runtime” → uninstall 误报清理
+
+**症状**：你在 `.gitignore` 注释里写 `# Trellis Lite runtime monitoring explained`，跑 `uninstall.sh` → 输出“removed Trellis Lite runtime entries”但实际什么都没变。
+
+**修法**：这是 0.6.10 已修复的 bug（O14）。升级后 grep 镋定到整行 + 字面匹配。如果你还在用旧版本，**不要在 .gitignore 注释里包含精确的 `# Trellis Lite runtime` 字符串**。
+
 ---
 
-## 八、日节奏建议
+## 十二、日节奏建议
 
 ### 早上开始
 
 ```bash
-# 1. 唤醒项目
+# 1. 唤醒项目 + 体检
 cd your-project
+python3 .trellis-lite/scripts/trellis.py doctor
+# → ✓ 全绿则跳过；⚠ warning 不阻 commit；✗ problem 必须修
 python3 .trellis-lite/scripts/trellis.py context
 # → 看 "Last session:" 知道上次在干啥
 ```
+
+**为什么 `doctor` 在 `context` 之前？** 当 `.current-task` 指向一个已删除的目录、或 `task.json` 损坏时，`context` 会输出误导信息。先跑 `doctor [--fix]` 把环境整平，`context` 给出的状态才可信。
 
 ### 中途继续
 
@@ -399,7 +687,7 @@ ls -lh .trellis-lite/workspace/yourname/journal-*.md
 
 ---
 
-## 九、跨会话恢复（最实用）
+## 十三、跨会话恢复（最实用）
 
 ### 你隔了 2 周回来
 
@@ -430,7 +718,7 @@ AI 路径：
 
 ---
 
-## 十、PRD + Spec 真实示例
+## 十四、PRD + Spec 真实示例
 
 ### 任务：加用户登录
 
@@ -486,7 +774,7 @@ AI 路径：
 
 ---
 
-## 十一、效率对比（有 vs 没有 Trellis Lite）
+## 十五、效率对比（有 vs 没有 Trellis Lite）
 
 | 维度 | 无 Trellis | 有 Trellis Lite |
 |---|---|---|
@@ -499,7 +787,7 @@ AI 路径：
 
 ---
 
-## 十二、决策清单（TL;DR）
+## 十六、决策清单（TL;DR）
 
 ### ✅ DO
 
@@ -507,17 +795,25 @@ AI 路径：
 - 每个新发现写 spec
 - 每个 5min+ 任务建 PRD
 - 让 AI 写完后**问**你才 commit
-- 1 个时间 1 个 in_progress
+- 1 个时间 1 个 in_progress（CLI 已会拒绝）
 - PRD 用动词 + 数字 + 验收点
+- **状态机异常时跑 `doctor --fix`**（不手动改 task.json）
+- **重装前先 `uninstall.sh .` + `install.sh . <name>`**（install 是幂等跳过，不是修复）
+- **不可逆操作依赖返 1（`task finish` / `task delete`）；可逆操作 Warning + 返 0（`task start` / `archive` / `cancel`）**
+- **遇到不可解释的 bug 先 `doctor [--fix]`，再看 `git log`**
 
 ### ❌ DON'T
 
 - 不要自动 commit
 - 不要写空的 PRD
-- 不要写"模糊"的 spec
+- 不要写“模糊”的 spec
 - 不要跳过 update-spec 阶段
 - 不要多个任务并行 in_progress
 - 不要让 PRD 长过大半页（一页内能 review）
+- **不要为单任务创建多个 `in_progress`**（CLI 会拒绝；`--replace` 要明确）
+- **不要期待 `install.sh` 重装会覆盖任何东西**（见第一节“重装语义”）
+- **不要手动改 task.json**（会被 `doctor` 报 Warning，且会绕开 set_status 守门）
+- **不要把 `task list` / `task current` 当 CI 闸门**（它们空状态返 0）
 
 ---
 
@@ -531,5 +827,7 @@ AI 路径：
 | `.trellis-lite/skills/check.md` | Phase 2 质量检查 |
 | `.trellis-lite/skills/update-spec.md` | Phase 3 沉淀经验 |
 | [usage-guide.md](usage-guide.md) | 完整使用示例 |
-| [design.md](design.md) | 架构设计原理 |
+| [design.md](design.md) | 架构设计原理（含状态机模型、子命令表） |
+| [exit-codes.md](exit-codes.md) | 退出码语义与可逆性原则（POSIX 风格） |
+| [architecture-review.md](architecture-review.md) | 架构审查记录与债务清单 |
 | [README.md](../README.md) | 快速上手 |
