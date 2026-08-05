@@ -73,6 +73,16 @@ class TestInstall(unittest.TestCase):
 class TestUninstall(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = Path(tempfile.mkdtemp(prefix="trellis-uninstall-"))
+        # Initialize as a git repo so install.sh triggers the pre-commit hook
+        # installation step (O9 fix path). Without .git/, install.sh silently
+        # skips the hook step, leaving the uninstall cleanup code untested.
+        subprocess.run(
+            ["git", "init", "-q"],
+            cwd=str(self.tmpdir), capture_output=True, text=True, timeout=10,
+        )
+        # Seed .gitignore so install.sh triggers the runtime-files step
+        # (it checks existence of .gitignore before adding entries).
+        (self.tmpdir / ".gitignore").write_text("node_modules/\n")
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmpdir, ignore_errors=True)
@@ -136,3 +146,109 @@ class TestUninstall(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertTrue(marker.exists(), "uninstall must not delete unrelated files")
         self.assertEqual(marker.read_text(), "important data")
+
+    # ---- O9 coverage: .gitignore cleanup + pre-commit hook removal ------
+
+    def test_uninstall_removes_gitignore_entries(self) -> None:
+        """O9: uninstall must clean up the Trellis block in .gitignore added by install.sh."""
+        self._install_all()
+        gitignore = self.tmpdir / ".gitignore"
+        # Sanity: install populated the .gitignore block
+        content_before = gitignore.read_text()
+        self.assertIn("# Trellis Lite runtime", content_before)
+        self.assertIn(".trellis-lite/.developer", content_before)
+        self.assertIn(".trellis-lite/.current-task", content_before)
+
+        r = self._run_uninstall(str(self.tmpdir))
+        self.assertEqual(r.returncode, 0, f"uninstall failed: {r.stdout}\n{r.stderr}")
+        # Marker comment and Trellis entries must be gone
+        content_after = gitignore.read_text()
+        self.assertNotIn("# Trellis Lite runtime", content_after)
+        self.assertNotIn(".trellis-lite/.developer", content_after)
+        self.assertNotIn(".trellis-lite/.current-task", content_after)
+
+    def test_uninstall_keeps_user_gitignore_entries(self) -> None:
+        """Uninstall must preserve the user's own .gitignore entries."""
+        self._install_all()
+        gitignore = self.tmpdir / ".gitignore"
+        # Append more user content AFTER the Trellis block
+        with gitignore.open("a") as f:
+            f.write("my-app/dist/\n")
+            f.write("*.bak\n")
+
+        r = self._run_uninstall(str(self.tmpdir))
+        self.assertEqual(r.returncode, 0)
+        content = gitignore.read_text()
+        # User entries (before and after the Trellis block) must survive
+        self.assertIn("node_modules/", content)
+        self.assertIn("my-app/dist/", content)
+        self.assertIn("*.bak", content)
+        # Trellis block must be cleaned up
+        self.assertNotIn("# Trellis Lite runtime", content)
+        self.assertNotIn(".trellis-lite/.developer", content)
+        self.assertNotIn(".trellis-lite/.current-task", content)
+
+    def test_uninstall_removes_precommit_hook(self) -> None:
+        """O9: uninstall must remove the pre-commit hook installed by install.sh."""
+        self._install_all()
+        hook = self.tmpdir / ".git/hooks/pre-commit"
+        # Sanity: install populated the hook
+        self.assertTrue(hook.is_file())
+        self.assertIn("Trellis Lite", hook.read_text())
+
+        r = self._run_uninstall(str(self.tmpdir))
+        self.assertEqual(r.returncode, 0)
+        self.assertFalse(hook.exists(), "Trellis's pre-commit hook must be removed")
+
+    def test_uninstall_keeps_user_precommit_hook(self) -> None:
+        """Uninstall must not touch a pre-commit hook that's NOT Trellis's."""
+        self._install_all()  # Installs the Trellis hook first
+        # Then the user overwrites it with their own hook (no "Trellis Lite" marker)
+        hook = self.tmpdir / ".git/hooks/pre-commit"
+        hook.write_text("#!/usr/bin/env bash\necho 'user hook — runs my linter'\n")
+        hook.chmod(0o755)
+
+        r = self._run_uninstall(str(self.tmpdir))
+        self.assertEqual(r.returncode, 0)
+        # User's hook must survive (uninstall only removes hooks containing "Trellis Lite")
+        self.assertTrue(hook.exists(), "user's pre-commit hook must not be removed")
+        self.assertNotIn("Trellis Lite", hook.read_text())
+
+    # ---- O11 coverage: user-edited .gitignore block -------------------
+
+    def test_uninstall_handles_user_edited_gitignore(self) -> None:
+        """O11 regression: user comments/blanks between Trellis entries must NOT
+        prevent cleanup of subsequent .trellis-lite/.X lines.
+
+        Install normally first (so uninstall accepts the directory), then
+        mutate the .gitignore to inject a user comment + blank line between
+        the two runtime entries. The original awk reset `skip` on every
+        non-matching line, which leaked the second entry. The fix keeps
+        skip=1 across intervening user lines.
+        """
+        # Install normally — populates .gitignore block + runtime + platforms
+        self._install_all()
+        gitignore = self.tmpdir / ".gitignore"
+        original = gitignore.read_text()
+        # Sanity: install wrote both entries contiguously
+        self.assertIn(".trellis-lite/.developer\n.trellis-lite/.current-task", original)
+
+        # Simulate a user editing the block: insert a comment + blank line
+        # between the two Trellis-managed entries.
+        edited = original.replace(
+            ".trellis-lite/.developer\n.trellis-lite/.current-task",
+            ".trellis-lite/.developer\n# user-added note between entries\n\n.trellis-lite/.current-task",
+        )
+        self.assertNotEqual(edited, original, "test precondition: replacement should mutate content")
+        gitignore.write_text(edited, encoding="utf-8")
+
+        r = self._run_uninstall(str(self.tmpdir))
+        self.assertEqual(r.returncode, 0, f"uninstall failed: {r.stdout}\n{r.stderr}")
+        content = gitignore.read_text()
+        # All Trellis runtime lines must be gone (the regression manifested here)
+        self.assertNotIn(".trellis-lite/.developer", content)
+        self.assertNotIn(".trellis-lite/.current-task", content)
+        self.assertNotIn("# Trellis Lite runtime", content)
+        # User content (before, between, and after the block) must survive
+        self.assertIn("node_modules/", content)
+        self.assertIn("user-added note between entries", content)

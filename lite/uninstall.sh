@@ -58,12 +58,17 @@ fi
 # --- Clean up .gitignore entries added by install.sh ---
 GITIGNORE="${TARGET}/.gitignore"
 if [ -f "$GITIGNORE" ] && grep -q "# Trellis Lite runtime" "$GITIGNORE" 2>/dev/null; then
-    # Remove the marker comment and the runtime file entries that follow it
+    # Remove the marker comment and any Trellis-managed runtime-file entries
+    # that follow it (until the next marker or non-managed line). We keep skip=1
+    # across intervening user lines (e.g. comments, blank lines) so a
+    # subsequent .trellis-lite/.X entry is still cleaned up — even if the
+    # user edited the block in between.
     tmpfile=$(mktemp)
     awk '
         /^# Trellis Lite runtime$/ { skip=1; next }
         skip && /^\.trellis-lite\/\./ { next }
-        { skip=0; print }
+        skip { print; next }
+        { print }
     ' "$GITIGNORE" > "$tmpfile" && mv "$tmpfile" "$GITIGNORE"
     echo "  ✓ .gitignore (removed Trellis Lite runtime entries)"
     removed=$((removed + 1))
