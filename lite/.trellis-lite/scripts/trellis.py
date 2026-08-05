@@ -334,7 +334,20 @@ def rotate_if_full(workspace: Path, journals: list[tuple[int, Path]]) -> Path:
 
     If no journals exist, creates `journal-1.md`. If the latest journal is
     at or above MAX_JOURNAL_LINES lines, creates the next numbered file.
+
+    Raises:
+        NotADirectoryError: if `workspace` exists but is not a directory
+            (e.g. a regular file was created at the path by accident, git
+            sync of a half-initialised state, or a stray `touch`). Callers
+            (cmd_session, doctor --fix) should translate this into a
+            actionable error message; previously the FileNotFoundError or
+            NotADirectoryError bubbled as a raw Python traceback.
     """
+    if workspace.exists() and not workspace.is_dir():
+        raise NotADirectoryError(
+            f"workspace path is not a directory: {workspace} "
+            f"(run 'trellis.py doctor --fix' to repair)"
+        )
     if not journals:
         journal = workspace / f"{JOURNAL_PREFIX}1.md"
         journal.write_text("# Journal 1\n\n", encoding="utf-8")
@@ -744,6 +757,24 @@ def _task_archive(args: list[str]) -> int:
     if task_dir is None:
         return 1
 
+    # Forward-only transitions (ALLOWED_TRANSITIONS) reject cancelled → archived
+    # (cancelled is terminal). Without this guard, set_status returns False but
+    # shutil.move still physically moves the directory into archive/, producing
+    # a split-brain state: directory is in archive/2026-MM/ but task.json still
+    # reads status=cancelled. The user sees '✓ Task archived' yet task list --all
+    # shows [cancelled], which is confusing. Refuse explicitly with an actionable
+    # pointer so the user knows to either delete --force or start a new task.
+    existing = read_json_strict(task_dir / FILE_TASK_JSON)
+    if existing is not None and existing.get("status") == "cancelled":
+        print(colored(
+            f"Refusing to archive: '{task_dir.name}' is cancelled. "
+            f"Cancelled is a terminal state (ALLOWED_TRANSITIONS). "
+            f"Use 'task delete --force {task_dir.name}' to remove it, "
+            f"or create a new task if you want to redo the work.",
+            C_RED,
+        ))
+        return 1
+
     # Update status via the central state-machine helper
     if not set_status(task_dir, "archived", when="archived"):
         print(colored(
@@ -877,6 +908,16 @@ def _task_delete(args: list[str]) -> int:
             f"Cancel it first (task cancel {task_dir.name}) or use --force.",
             C_RED,
         ))
+        # Tip: .current-task still points at this task. Without this hint,
+        # the user might miss that the pointer is stale after the refused
+        # delete (we did NOT clear it because the deletion didn't happen).
+        current = get_current_task()
+        if current and Path(current).name == task_dir.name:
+            print(colored(
+                "  Tip: 'task current' still shows this task; "
+                "run 'task cancel' first (or 'task finish' if in_progress).",
+                C_DIM,
+            ))
         return 1
 
     # Clear current pointer if it pointed here
@@ -930,12 +971,29 @@ def cmd_session(args: list[str]) -> int:
 
     workspace = get_workspace_dir()
     if workspace is None:
-        print(colored("Developer not initialized. Run: trellis.py init <name>", C_RED))
+        # Distinguish "never initialized" from "file is corrupted" so the
+        # error message points at the right repair (doctor --fix vs init).
+        if (get_trellis_dir() / FILE_DEVELOPER).is_file():
+            print(colored(
+                "Error: .trellis-lite/.developer exists but has no 'name=' line. "
+                "Run 'trellis.py doctor --fix' to repair, or re-init with "
+                "'trellis.py init <name>' (will overwrite).",
+                C_RED,
+            ))
+        else:
+            print(colored("Developer not initialized. Run: trellis.py init <name>", C_RED))
         return 1
 
-    # Find or create active journal (parse numbers so rotation is safe after manual deletions)
-    journals = list_journals(workspace)
-    journal = rotate_if_full(workspace, journals)
+    # Find or create active journal. list_journals + rotate_if_full can raise
+    # NotADirectoryError when workspace/<dev>/ was corrupted to a regular file
+    # (stray touch, partial git sync, mid-init crash). Translate to a clean
+    # red message instead of letting the Python traceback surface to the user.
+    try:
+        journals = list_journals(workspace)
+        journal = rotate_if_full(workspace, journals)
+    except NotADirectoryError as e:
+        print(colored(f"Error: {e}", C_RED))
+        return 1
 
     # Append session entry
     now = datetime.now().strftime("%Y-%m-%d %H:%M")

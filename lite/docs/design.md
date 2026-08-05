@@ -207,7 +207,7 @@ AI 在 Phase 2（CODE）开始前**必须读取相关 spec**，这不是建议�
 | 第 3 轮流程审查 | 流程 | 4 | skills 断链（workflow.md 内联路由）、commit 指引与 no-auto-commit 规则矛盾、新增 `task cancel` 放弃出口、start/finish 增加状态警告 |
 | 用户加固（提交 7c7d059） | 语义 / UX | 5 | 拒绝任务名 `archive`（防归档自身容器）、glob → endswith 字面匹配避免 glob 注入、create 已有活跃任务时警告、title 引号配对剥离、README 平台表述精确化 |
 | 第 4 轮体验增强（本轮） | UX / 文档 | 4 | `task list --all` 查看已归档任务、`--commit` 哈希格式校验、`context` 输出 spec 列表 + 最近 journal 摘要、workflow.md 增加 `.current-task` 并发警告 |
-| 本轮（质量提升） | 测试 / CI | 2 | `lite/tests/` 123 个 unittest 覆盖全部命令（unittest 零依赖）；`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上跑 py_compile + install.sh 烟测 + uninstall.sh 烟测 + unittest + coverage 报告；`trellis.py` 全量返回值类型注解（32/32）并补 14 个 cmd_* docstring |
+| 本轮（质量提升） | 测试 / CI | 2 | `lite/tests/` 125 个 unittest 覆盖全部命令（unittest 零依赖）；`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上跑 py_compile + install.sh 烟测 + uninstall.sh 烟测 + unittest + coverage 报告；`trellis.py` 全量返回值类型注解（32/32）并补 14 个 cmd_* docstring |
 
 ---
 

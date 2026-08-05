@@ -90,3 +90,40 @@ class TestSession(unittest.TestCase):
         m = re.search(r"Total sessions: (\d+)", r.stdout)
         self.assertIsNotNone(m, f"no total line in:\n{r.stdout}")
         self.assertEqual(m.group(1), "1", f"F15 regression: non-numbered journal counted\n{r.stdout}")
+
+    def test_session_corrupt_developer_file_gives_specific_error(self) -> None:
+        """F45: .developer exists but has no 'name=' line must produce a distinct
+        error message that points at 'doctor --fix', NOT 'trellis.py init <name>'
+        (which would mislead the user into overwriting a still-recoverable file).
+        """
+        dev_file = self.h.tmpdir / ".trellis-lite/.developer"
+        dev_file.write_text("garbage no name line\n", encoding="utf-8")
+        r = self.h.run(["session", "--title", "T"])
+        self.assertNotEqual(r.returncode, 0)
+        # Must mention doctor --fix AND must NOT tell the user to 'init <name>'.
+        self.assertIn("doctor", r.stdout.lower(),
+                      f"corrupt .developer must hint doctor --fix, got:\n{r.stdout}")
+        self.assertNotIn("Developer not initialized", r.stdout,
+                         "must not conflate corrupted file with uninitialized state")
+
+    def test_session_workspace_is_a_file_does_not_traceback(self) -> None:
+        """F44: when workspace/<dev>/ exists but is a regular file (stray touch,
+        partial git sync, mid-init crash), `session` must NOT show a raw Python
+        traceback. It must print a clean red error and return non-zero.
+        """
+        ws = self.h.tmpdir / ".trellis-lite/workspace/tester"
+        # Replace the workspace dir with a regular file of the same name.
+        import shutil
+        shutil.rmtree(ws)
+        ws.write_text("not a directory\n", encoding="utf-8")
+        r = self.h.run(["session", "--title", "T"])
+        self.assertNotEqual(r.returncode, 0)
+        # No Python traceback (which would include 'File " or 'Traceback').
+        combined = r.stdout + r.stderr
+        self.assertNotIn("Traceback", combined,
+                         f"F44 regression: raw traceback surfaced:\n{combined}")
+        self.assertNotIn('File "', combined,
+                         f"F44 regression: stack frames surfaced:\n{combined}")
+        # Must mention doctor --fix (the actionable repair path).
+        self.assertIn("doctor", combined.lower(),
+                      f"F44 must hint at doctor --fix, got:\n{combined}")

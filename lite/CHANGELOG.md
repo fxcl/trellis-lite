@@ -49,6 +49,15 @@
 - `docs/design.md` 任务系统小节补"时间戳约定"：明确 `created` / `started` / `finished` / `archived` / `cancelled` 各自对应哪个事件；解释 `planning` 任务**没有** `started` 字段是正确语义。
 - `install.sh` --help / 输出现范补"重装语义"：说明重装不会覆盖已有 `.developer`、AGENTS.md、CLAUDE.md、.clinerules/、.gitignore runtime 条目、pre-commit hook，仅在目标未安装时执行初始化动作。
 
+### 修复（第 6 轮 oracle-reviewer）
+- **`task archive` 现在显式拒绝归档已取消任务**：之前 forward-only 状态机（`ALLOWED_TRANSITIONS`）会拒绝 `cancelled → archived`（cancelled 是 terminal），但 `_task_archive` 只看到 `set_status` 返回 `False` 就报 "missing or corrupted" 警告 + 仍然执行 `shutil.move`，产生 split-brain（目录在 `archive/2026-MM/` 但 `task.json` 仍 `status=cancelled`，`task list --all` 显示 `[cancelled]`）。新行为：在调用 `set_status` 之前用 `read_json_strict` 预检；如果命中 `cancelled`，明确报错 `Refusing to archive: '...' is cancelled.` + exit 1，**不移动目录**（与 F27 `_task_start` 的拒绝模式对称）。
+- **`session` 不再 traceback（workspace 损坏保护）**：之前 `rotate_if_full` 在 `workspace/<dev>/` 是文件时（误触、git 误同步、中途崩溃残留）直接 `journal.write_text()` 到文件路径，抛 `NotADirectoryError` 未捕获，用户看到 raw Python 堆栈。新行为：`rotate_if_full` 头部加 `if workspace.exists() and not workspace.is_dir(): raise NotADirectoryError(...)`，`cmd_session` 顶层 `try/except NotADirectoryError → print colored Error + return 1`。消息明确指向 `trellis.py doctor --fix`。
+- **`session` 区分 .developer 损坏 vs 未初始化**：之前 `.developer` 文件存在但无 `name=` 行（被 git 误同步、编辑器崩溃）时，`get_developer()` 返回 None，`session` 错误消息说“Run: trellis.py init <name>”，误导用户重新 init（覆写可恢复文件）。新行为：检测到 `.developer` 文件存在时给独立错误消息，推荐 `doctor --fix` 或 init（明说 init 会覆写）。
+- **`task delete` 拒绝路径补充 .current-task tip**：之前 `task delete` 拒绝 in_progress 任务后 `.current-task` 仍指向该任务（拒绝路径不清理指针是合理的），但用户可能错过这个状态。新行为：拒绝路径里若 `.current-task` 还指向被拒任务，补充 `Tip: 'task current' still shows this task; run 'task cancel' first ...` 提示；非活跃任务不打印这个 tip。
+
+### 文档（第 6 轮 oracle-reviewer）
+- 测试数量 `123` 同步为 `125`（README.md / design.md L210 / usage-guide.md L313+L347；第 5 轮漏修了 design.md "本轮（质量提升）"行 + README.md / usage-guide.md）。
+
 ### 测试
 - `TestUninstall` 5 个新测试覆盖 `uninstall.sh` 的 `.gitignore` 清理与 pre-commit hook 移除路径（含 O9 补充覆盖 + O11 回归保护：用户在 `.gitignore` 标记块内插入注释/空行后，uninstall 仍能完全清理所有 `.trellis-lite/.X` 条目）。
 - `TestUninstall` + `TestInstall` 新增 3 个 O14/O16 测试：`test_uninstall_ignores_non_marker_mentions`（散文 marker 不误触发清理）、`test_install_preserves_existing_developer_on_reinstall`（重装保留 dev name）；`TestUninstall.setUp` O17 增强：git init 失败时 `self.skipTest()` 避免 false-positive。测试总数 116 → 123。

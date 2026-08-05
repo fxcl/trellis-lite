@@ -325,3 +325,65 @@ class TestTaskLifecycle(unittest.TestCase):
         r = self.h.run(["task", "delete", "ghost"])
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("not found", r.stdout)
+
+    def test_archive_rejects_cancelled_terminal_state(self) -> None:
+        """F32: archiving a cancelled task must explicitly reject (not split-brain)."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "cancel", "t"])
+        r = self.h.run(["task", "archive", "t"])
+        # Must reject (non-zero) — cancelled is terminal.
+        self.assertNotEqual(r.returncode, 0,
+                            f"archive on cancelled must reject, got:\n{r.stdout}")
+        self.assertIn("Refusing to archive", r.stdout)
+        self.assertIn("cancelled", r.stdout)
+        # Must NOT print the misleading "Task archived" success line.
+        self.assertNotIn("Task archived", r.stdout)
+        # CRITICAL: directory must still be in tasks/, NOT moved to archive/.
+        d = self._task_path("t")
+        self.assertIsNotNone(d, "cancelled task dir must stay in tasks/")
+        self.assertNotIn("archive", str(d),
+                         "cancelled task must NOT be moved to archive/")
+        # Status must still be cancelled (unchanged).
+        data = json.loads((d / "task.json").read_text())
+        self.assertEqual(data["status"], "cancelled")
+
+    def test_archive_done_task_succeeds(self) -> None:
+        """F32 control: archiving a done task is the happy path and must succeed."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        self.h.run(["task", "finish"])
+        r = self.h.run(["task", "archive", "t"])
+        self.assertEqual(r.returncode, 0,
+                         f"archive on done must succeed, got:\n{r.stdout}")
+        self.assertIn("Task archived", r.stdout)
+        # Task dir must be in archive/ now.
+        archive = self.h.tmpdir / ".trellis-lite/tasks/archive"
+        self.assertTrue(archive.is_dir(),
+                        "archive dir must exist after first archive")
+        # find a month dir containing the task
+        months = [p for p in archive.iterdir() if p.is_dir()]
+        self.assertEqual(len(months), 1, f"expected 1 month, got {months}")
+        self.assertTrue((months[0] / "08-05-t").is_dir(),
+                        "task dir must be moved to archive/<month>/")
+
+    def test_delete_refused_shows_tip_when_pointer_still_active(self) -> None:
+        """F41: refused delete on the active task must hint about stale .current-task."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        r = self.h.run(["task", "delete", "t"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Refusing to delete", r.stdout)
+        # The tip must appear since .current-task still points to 't'.
+        self.assertIn("Tip", r.stdout)
+        self.assertIn("task current", r.stdout)
+
+    def test_delete_refused_no_tip_when_not_active(self) -> None:
+        """F41: refused delete on a non-active task must NOT print the active-pointer tip."""
+        self.h.run(["task", "create", "First", "--slug", "f"])
+        self.h.run(["task", "finish"])  # 'f' is now done, not active
+        self.h.run(["task", "create", "Second", "--slug", "s"])  # 's' is active
+        r = self.h.run(["task", "delete", "f"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Refusing to delete", r.stdout)
+        # Tip must NOT appear since .current-task points to 's', not 'f'.
+        self.assertNotIn("Tip", r.stdout)

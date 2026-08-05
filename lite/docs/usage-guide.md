@@ -310,7 +310,7 @@ archive + session
 
 ## 自带测试套件
 
-Trellis Lite 仓库自带 123 个 unittest 覆盖全部命令 + 安装脚本 + doctor + pre-commit hook + status machine + usage consistency，作为开发者和 CI 的回归保护。
+Trellis Lite 仓库自带 125 个 unittest 覆盖全部命令 + 安装脚本 + doctor + pre-commit hook + status machine + usage consistency，作为开发者和 CI 的回归保护。
 
 ```bash
 # 从仓库根运行（注意：Python 3.9+ 需要 `tests.` 包前缀，相对 import 才能工作）
@@ -344,4 +344,4 @@ CI：`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上自动跑（推
 | `.trellis-lite/spec/` | 编码规范（AI 写代码前必读） |
 | `.trellis-lite/workspace/<dev>/journal-*.md` | 跨会话记忆 |
 | `lite/docs/design.md` | 设计原理与架构文档 |
-| `lite/tests/` | 123 个 unittest（回归保护） |
+| `lite/tests/` | 125 个 unittest（回归保护） |
