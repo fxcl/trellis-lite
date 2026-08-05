@@ -119,6 +119,40 @@ class TestTaskLifecycle(unittest.TestCase):
         # Should acknowledge the task is already active.
         self.assertIn("already in_progress", r.stdout)
 
+    def test_start_rejects_done_terminal_state(self) -> None:
+        """F27: starting a done task must explicitly reject (not silently succeed)."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        self.h.run(["task", "finish"])  # → done
+        r = self.h.run(["task", "start", "t"])
+        # Must reject (non-zero) — forward-only transitions.
+        self.assertNotEqual(r.returncode, 0,
+                            f"start on done task must reject, got:\n{r.stdout}")
+        # Must mention the terminal state.
+        self.assertIn("done", r.stdout)
+        # Must NOT print the misleading "missing or corrupted" warning.
+        self.assertNotIn("corrupted", r.stdout)
+        # Must NOT print the misleading success line.
+        self.assertNotIn("Task started", r.stdout)
+        # CRITICAL: .current-task must NOT have been switched.
+        ct = self.h.tmpdir / ".trellis-lite/.current-task"
+        self.assertFalse(ct.exists(),
+                         "failed start must not switch the active pointer")
+
+    def test_start_rejects_cancelled_terminal_state(self) -> None:
+        """F27: starting a cancelled task must reject (no forward re-entry)."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "cancel", "t"])  # → cancelled
+        r = self.h.run(["task", "start", "t"])
+        self.assertNotEqual(r.returncode, 0,
+                            f"start on cancelled task must reject, got:\n{r.stdout}")
+        self.assertIn("cancelled", r.stdout)
+        self.assertNotIn("Task started", r.stdout)
+        # Status must still be cancelled.
+        d = find_task(self.h.tmpdir, "t")
+        data = json.loads((d / "task.json").read_text())
+        self.assertEqual(data["status"], "cancelled")
+
     # ---- finish -----------------------------------------------------------
 
     def test_finish_sets_done_and_clears_current(self) -> None:

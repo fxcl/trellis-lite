@@ -642,9 +642,25 @@ def _task_start(args: list[str]) -> int:
     # set_status is idempotent (returns True when already in_progress), so we
     # pre-check the current status to show an accurate message: a re-start on
     # an already-active task is a benign no-op, not a corrupted file.
+    #
+    # Forward-only transitions (ALLOWED_TRANSITIONS) prevent re-entering
+    # in_progress from done / archived / cancelled. Without this guard, a
+    # user running `task start <finished-task>` would see a confusing
+    # "task.json missing or corrupted" warning AND a "✓ Task started"
+    # success line, while .current-task switched but task.json still held
+    # the old status — a split-brain state. Surface the state-machine
+    # rejection explicitly instead of letting it surface as silent failure.
     existing_status = read_json(task_dir / FILE_TASK_JSON).get("status")
     if existing_status == "in_progress":
         print(colored(f"Note: '{task_dir.name}' is already in_progress.", C_DIM))
+    elif existing_status in ("done", "archived", "cancelled"):
+        print(colored(
+            f"Error: cannot start a task in terminal state '{existing_status}'. "
+            f"Forward-only transitions are enforced (see ALLOWED_TRANSITIONS). "
+            f"Use 'task archive <name>' to finalize, or create a new task.",
+            C_RED,
+        ))
+        return 1
     elif not set_status(task_dir, "in_progress", when="started"):
         print(colored(
             f"Warning: {task_dir.name}/task.json missing or corrupted; "
@@ -652,7 +668,7 @@ def _task_start(args: list[str]) -> int:
             C_YELLOW,
         ))
 
-    # Set as current
+    # Set as current (only reached for valid transitions / planning tasks)
     rel = f"{TRELLIS_DIR}/{DIR_TASKS}/{task_dir.name}"
     set_current_task(rel)
 
