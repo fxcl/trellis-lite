@@ -9,7 +9,7 @@
 
 ---
 
-## [Unreleased] - 2026-07-26
+## [Unreleased] - 2026-08-06
 
 ### ⚠ 破坏性变更
 - **`task create` 已有活跃任务时拒绝（返回 1）**：之前是"警告 + 继续并替换活跃指针"，用户容易"丢了任务"。新行为遵循"one task at a time"硬规则 —
@@ -107,6 +107,31 @@
 - `tests/test_task.py` 新增 `test_delete_rejects_corrupted_task_json`（F53 对称化 + 误导 hint 移除 + 目录存活断言）。
 - `tests/test_task.py` 修复 `test_archive_done_task_succeeds` 日期时间炸弹（hardcoded `08-05` → dynamic `today_prefix`）。
 - 138 个 unittest 全部通过（25.114s）。
+
+### 修复（第 9 轮 oracle-reviewer）
+
+第 9 轮审查确认 0 个 P1；2 个 P2 均已修复。本节同时补记第 8 轮后未入 CHANGELOG 的 F54 / F55 / F62 变更。
+
+- **`task create --replace` 自动关闭旧任务（F49）**：之前 `--replace` 只切换活跃指针，旧任务停留在 `in_progress` 成为隐形孤儿（下次 `task start` 会报冲突 warning）。新行为：接管时自动将旧任务置为 `done`（含 `finished` 时间戳）；旧目录缺失/已终态/corrupted 时安全跳过，无部分状态风险。
+- **`task delete --force` 绕过 corrupted 守卫（F63）**：F53 的非 force 拒绝消息推荐 `task delete --force <name>` 作为恢复路径，若 `--force` 也拒绝 corrupted 则用户被困在死循环。新行为：`--force` 跳过 corrupted 预检直接删除（含清理 `.current-task` 指针），作为“最后手段”真正可用。
+- **`task current` / `task context` 感知 corrupted 活跃任务**：之前用 lossy `read_json`，corrupted 时静默输出 `Title: ?` 假装健康。新行为：`read_json_strict` 检测后输出 warning（指向 `doctor --fix`）+ exit 0（查询类命令不阻断）。
+- **`doctor --fix` 从 workspace 恢复 developer 名**：之前 `.developer` 缺失时无条件写 `name=developer`，孤立真实 workspace/<真名>/ 导致 journal 不可达。新行为：workspace/ 恰好 1 个子目录时恢复真名，0/2+ 时才回落默认。
+- **`doctor` 报告 corrupted 活跃任务为 Problem（F55）**：`.current-task` 指向的 `task.json` 损坏时不再显示绿色 `✓ Active task (?)`，改为 `✗` + Problem（驱动 exit 1，pre-commit hook 阻断 commit）；`--fix` 不自动清该指针（用户需自行决定手动修复还是 `task delete --force`）。
+- **`doctor` 完整性检查递归 archive（F54）**：之前只扫 `tasks/*/`，已归档任务的孤儿目录/corrupted `task.json` 完全不可见。新行为：递归扫 `tasks/archive/<月>/*/`，报告带 `archive/<月>/` 前缀。
+- **`doctor --fix` 修复 `.developer` 无 name= 行（第 9 轮 P2-1）**：`session` 在该状态推荐 `doctor --fix`，但之前 `--fix` 只覆盖“文件缺失”分支，推荐路径是死路。新行为：两种损坏形态均用同一恢复逻辑修复（单 workspace 子目录恢复真名，否则默认 developer）。
+- **`install.sh` / `uninstall.sh` 要求 bash 4+（F62）**：脚本使用 `read -ra` 与 `arr+=()` 语法，macOS 自带 bash 3.2.57 会静默错误。新行为：`install.sh` 头部显式检查版本，不满足时报错退出并提示 `brew install bash`；README 同步前置要求。
+
+### 文档（第 9 轮 oracle-reviewer）
+
+- **`best-practices.md § 8` 与实现对齐（P2-2）**：§8.1 检查 #2/#5/#6 补两种损坏形态、F55 corrupted Problem、F54 archive 递归描述；§8.2 从“不能修复 problems”改为“能修 2 类 Problem”（`.developer` 缺失、stale `.current-task`），并补 developer 真名恢复语义。
+- **数字同步**：行数 `~1543`/`~1370` → `~1704`，测试数 `137` → `151`（README / design / usage-guide / best-practices 四处）；usage-guide 测试表格按模块刷新（task 38→43 / context 10→11 / doctor 13→21）。
+
+### 测试（第 9 轮 oracle-reviewer）
+
+- `tests/test_doctor.py` 新增 P2-1 双测试（no-name 分支恢复真名 + 多 workspace 回落默认）；早前补 F54/F55 共 4 个、developer 恢复 2 个。
+- `tests/test_task.py` 新增 F53 corrupted 拒绝 + F63 `--force` 绕过测试；修复 `test_archive_done_task_succeeds` 日期时间炸弹。
+- `tests/test_install.py` 新增 `_has_bash_4plus()` 探测，macOS bash 3.2 下 install/uninstall 类测试 `skipTest`（CI Linux bash 5+ 正常跑）。
+- 151 个 unittest 全部通过（macOS 上 skipped=15 为 bash 版本 skip，非失败）。
 
 ---
 

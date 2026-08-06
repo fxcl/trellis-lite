@@ -1,6 +1,6 @@
 # Trellis Lite — 最佳实践指南
 
-> 基于 7+ 轮 oracle-reviewer 审查沉淀 + ~1543 行实现 + 137 个 unittest 覆盖的实战经验。
+> 基于 9 轮 oracle-reviewer 审查沉淀 + ~1704 行实现 + 151 个 unittest 覆盖的实战经验。
 >
 > 配套文档：
 > - [README.md](../README.md) — 快速上手
@@ -442,11 +442,11 @@ fi
 
 ```
 1. .trellis-lite/ 存在？否则 doctor 早退
-2. .developer 文件存在且含 name=... 行
+2. .developer 文件存在且含 name=... 行（两种损坏形态：文件缺失 → Problem；无 name= 行 → Warning，--fix 均可恢复）
 3. tasks/, tasks/archive/, spec/ 三个子目录都存在
 4. workspace/<dev>/ 存在 + 至少 1 个 journal-N.md
-5. .current-task 指针指向的目录存在（不被清理时则指向丢失）
-6. tasks/*/ 下的 task.json 都不丢失（不是孤儿目录）
+5. .current-task 指针指向的目录存在，且其 task.json 可读（F55：corrupted 报 Problem ✗，驱动 exit 1）
+6. tasks/*/ 与 tasks/archive/<月>/*/ 下的 task.json 都不丢失、不损坏（F54：递归 archive + strict 读）
 7. journal 编号从 1 开始且无 gap
 8. Python ≥ 3.9
 9. 脏文件数（仅 informational，不返非零）
@@ -454,15 +454,15 @@ fi
 
 ### 8.2 --fix 模式
 
-`--fix` 会自动修复大部分 Warning（不能修复 problems）：
+`--fix` 会自动修复大部分 Warning，**也能修复 2 类 Problem**（`.developer` 缺失、stale `.current-task` 指针）：
 
-- 补齐丢失的子目录
+- 恢复 `.developer`：workspace/ 恰好 1 个子目录时恢复真名（保住 journal 可达），否则补默认 developer；同时覆盖“文件缺失”和“无 name= 行”两种损坏形态（第 9 轮 P2-1）
+- 补齐丢失的子目录（含 stray-file 恢复：路径被普通文件占用时先清理再建）
 - 创建 workspace 和首个 journal
 - 清理指向丢失目录的 `.current-task` 指针
-- 补默认 developer=developer（仅当完全缺失）
 
 **不会自动修复**：
-- `task.json` 损坏（需要人判断）
+- `task.json` 损坏（需要人判断：手动修复，或 `task delete --force <name>` 丢弃；doctor 不会替你清 `.current-task` 指向的损坏任务）
 - journal 编号 gap（可能是你手动删的）
 
 ### 8.3 使用场景

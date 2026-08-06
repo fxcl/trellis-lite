@@ -137,6 +137,44 @@ class TestDoctor(unittest.TestCase):
                 finally:
                     h.cleanup()
 
+    def test_doctor_fix_recovers_developer_name_line_when_file_half_written(self) -> None:
+        """P2-1 (round 9): .developer exists but has no name= line (editor
+        crash / partial sync). `session` recommends `doctor --fix` in this
+        state, so --fix must actually repair it — previously the fix branch
+        only existed for the missing-file case, making the recommended
+        recovery path a dead end. Recovery must reuse the single-workspace
+        subdir identity so journals stay reachable."""
+        dev_file = self.h.tmpdir / ".trellis-lite/.developer"
+        dev_file.write_text("garbage\n", encoding="utf-8")
+        # Plain doctor surfaces the warning (exit 0, warning-level).
+        r = self._run(["doctor"])
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("no name= line", r.stdout)
+        # doctor --fix must actually repair it (recovering 'tester' from the
+        # single workspace subdir created by the Harness).
+        r2 = self._run(["doctor", "--fix"])
+        self.assertEqual(r2.returncode, 0)
+        self.assertEqual(dev_file.read_text().strip(), "name=tester",
+                         f"--fix must recover the developer name from the "
+                         f"single workspace subdir, got:\n{dev_file.read_text()}")
+        # And the follow-up session-facing command works again.
+        r3 = self._run(["doctor"])
+        self.assertEqual(r3.returncode, 0)
+        self.assertIn("Developer: tester", r3.stdout)
+        self.assertNotIn("no name= line", r3.stdout)
+
+    def test_doctor_fix_defaults_name_line_when_workspace_ambiguous(self) -> None:
+        """P2-1 fallback: .developer half-written AND workspace/ has 2+
+        subdirs → --fix writes the generic 'developer' default without
+        crashing (no single identity to recover)."""
+        dev_file = self.h.tmpdir / ".trellis-lite/.developer"
+        dev_file.write_text("", encoding="utf-8")
+        ws_root = self.h.tmpdir / ".trellis-lite/workspace"
+        (ws_root / "alice").mkdir(exist_ok=True)  # tester/ already exists → 2 subdirs
+        r = self._run(["doctor", "--fix"])
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(dev_file.read_text().strip(), "name=developer")
+
     def test_doctor_warns_on_internal_journal_gap(self) -> None:
         """F20: gap in journal numbering (e.g. 1, 3, 5) is a warning."""
         ws = self.h.tmpdir / ".trellis-lite/workspace/tester"

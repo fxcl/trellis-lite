@@ -1403,6 +1403,22 @@ def _check_trellis_present(tdir: Path, problems: list[str]) -> bool:
     return True
 
 
+def _recover_developer_name(tdir: Path) -> str:
+    """Best-effort recovery of the developer identity from workspace/.
+
+    If workspace/ has exactly one subdir, that subdir is the real identity
+    and restoring it keeps the user's journals reachable (otherwise a fresh
+    workspace/developer/ would be created and orphan the real one). Fall
+    back to the generic "developer" default when there's no single candidate.
+    """
+    ws_root = tdir / DIR_WORKSPACE
+    if ws_root.is_dir():
+        subdirs = [p for p in ws_root.iterdir() if p.is_dir()]
+        if len(subdirs) == 1:
+            return subdirs[0].name
+    return "developer"
+
+
 def _check_developer_file(tdir: Path, fix: bool, problems: list[str], warnings: list[str]) -> None:
     """Check #2: .developer must exist and contain name=..."""
     dev_file = tdir / FILE_DEVELOPER
@@ -1410,18 +1426,7 @@ def _check_developer_file(tdir: Path, fix: bool, problems: list[str], warnings: 
         problems.append(f"{FILE_DEVELOPER} missing")
         print(colored("  ✗", C_RED), f"{FILE_DEVELOPER} missing")
         if fix:
-            # Recover the developer name from the existing workspace when
-            # possible: if workspace/ has exactly one subdir, that subdir is
-            # the real identity and restoring it keeps the user's journals
-            # reachable (otherwise _check_workspace_dir would create a fresh
-            # workspace/developer/ and orphan the real one). Fall back to the
-            # generic "developer" default only when there's no single candidate.
-            recovered = "developer"
-            ws_root = tdir / DIR_WORKSPACE
-            if ws_root.is_dir():
-                subdirs = [p for p in ws_root.iterdir() if p.is_dir()]
-                if len(subdirs) == 1:
-                    recovered = subdirs[0].name
+            recovered = _recover_developer_name(tdir)
             dev_file.write_text(f"name={recovered}\n", encoding="utf-8")
             problems.pop()
             print(colored("    ↳", C_DIM),
@@ -1433,6 +1438,19 @@ def _check_developer_file(tdir: Path, fix: bool, problems: list[str], warnings: 
     else:
         warnings.append(f"{FILE_DEVELOPER} exists but has no name= line")
         print(colored("  ⚠", C_YELLOW), f"{FILE_DEVELOPER} has no name= line")
+        if fix:
+            # P2-1 (round 9): `session` points users at `doctor --fix` when
+            # .developer is unreadable (no name= line), but previously --fix
+            # had no repair branch here — the recommended path was a dead
+            # end. Reuse the same recovery as the missing-file case so the
+            # loop closes: file exists but half-written (editor crash,
+            # partial sync) → restore identity from the single workspace
+            # subdir, or the generic default.
+            recovered = _recover_developer_name(tdir)
+            dev_file.write_text(f"name={recovered}\n", encoding="utf-8")
+            warnings.pop()
+            print(colored("    ↳", C_DIM),
+                  f"restored developer name={recovered}")
 
 
 def _check_required_subdirs(tdir: Path, fix: bool, warnings: list[str]) -> None:
@@ -1534,7 +1552,7 @@ def _check_current_task(tdir: Path, fix: bool, problems: list[str]) -> None:
         # Icon matches problem-level severity: this drives doctor's exit code
         # to 1 (problems → `✗ Found N problem(s)` in _doctor_finish), so the
         # inline marker must be `✗` + C_RED like the other problem branches
-        # (missing .current-task target at line 1469, orphan/corrupted in
+        # (stale .current-task target above, orphan/corrupted in
         # _check_task_integrity). Using `⚠`/C_YELLOW here mislabelled a
         # blocking problem as a non-blocking warning.
         print(colored("  ✗", C_RED),
