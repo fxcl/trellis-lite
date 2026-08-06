@@ -180,6 +180,109 @@ class TestDoctor(unittest.TestCase):
         self.assertNotIn("Traceback", combined)
         self.assertNotIn("FileExistsError", combined)
 
+    def test_doctor_detects_orphan_in_archive_subdir(self) -> None:
+        """F54: doctor must flag orphan task dir under tasks/archive/<YYYY-MM>/.
+
+        Previously only the active tasks/ tree was scanned — a deleted
+        task.json inside the archive (e.g. `git rm` half-completed, stray
+        `rm`) was invisible to doctor even though `task list --all`
+        would still show it.
+        """
+        archive_task = self.h.tmpdir / ".trellis-lite/tasks/archive/2026-08/MM-DD-zombie"
+        archive_task.mkdir(parents=True)
+        self.assertTrue(archive_task.is_dir())
+        r = self._run(["doctor"])
+        self.assertEqual(r.returncode, 1, "doctor must flag orphan archived task as a problem")
+        self.assertIn("orphan", r.stdout)
+        # Scope prefix must indicate the archive/<month>/ location so the
+        # user can locate the orphan without `find`.
+        self.assertIn("archive/2026-08/", r.stdout)
+
+    def test_doctor_detects_corrupted_task_json_in_archive_subdir(self) -> None:
+        """F54: doctor must flag a present-but-unreadable task.json inside archive.
+
+        Catches partial writes / manual edits / half-synced git checkouts
+        where task.json exists but cannot be parsed by read_json_strict.
+        Previously the existence check alone masked this — `task list
+        --all` showed `[?]` with no doctor signal.
+        """
+        archive_task = self.h.tmpdir / ".trellis-lite/tasks/archive/2026-08/MM-DD-rotten"
+        archive_task.mkdir(parents=True)
+        (archive_task / "task.json").write_text("not json {", encoding="utf-8")
+        r = self._run(["doctor"])
+        self.assertEqual(r.returncode, 1,
+                         f"corrupted archived task.json must flag, got:\n{r.stdout}")
+        self.assertIn("corrupted", r.stdout)
+        # The problem line must point at the actual archived task so the
+        # user knows which one to inspect (vs the previous silent miss).
+        self.assertIn("MM-DD-rotten", r.stdout)
+        # The problem line must use the ✗ marker (problem severity), not
+        # the ✓ marker (healthy check) — strip ANSI to find the marker.
+        import re
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", r.stdout)
+        problem_lines = [
+            line for line in plain.splitlines()
+            if "MM-DD-rotten" in line and line.lstrip().startswith(("✗", "⚠"))
+        ]
+        self.assertTrue(problem_lines,
+                         f"expected at least one ✗ / ⚠ line pointing at the "
+                         f"corrupted archive task, got:\n{r.stdout}")
+
+    def test_doctor_warns_on_corrupted_active_task(self) -> None:
+        """F55: when the active task (per .current-task) has corrupted task.json,
+        doctor must surface a Warning / Problem, not a green ✓.
+
+        `task start` / `task finish` / `task cancel` all refuse on
+        corrupted metadata (F44/F47/F48/F52); doctor must agree so the
+        user sees one consistent signal across commands.
+        """
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        # Locate the task dir that .current-task now points at.
+        tasks_root = self.h.tmpdir / ".trellis-lite/tasks"
+        bad = None
+        for p in tasks_root.iterdir():
+            if p.is_dir() and p.name != "archive" and (p / "task.json").exists():
+                bad = p
+                break
+        assert bad is not None, "test setup: should have an active task"
+        (bad / "task.json").write_text("garbage", encoding="utf-8")
+        r = self._run(["doctor"])
+        # doctor must report the active task as a problem (Warning red ✗ or yellow ⚠).
+        # NOT a green ✓.
+        combined = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 1,
+                         f"corrupted active task.json must flag, got:\n{r.stdout}")
+        self.assertIn("corrupted", combined)
+        # The previously-misleading `✓ Active task:` line must be gone.
+        self.assertNotIn("✓ Active task", combined,
+                          "doctor must NOT report corrupted active task as green ✓")
+
+    def test_doctor_does_not_silently_clear_corrupted_active_pointer(self) -> None:
+        """F55: `doctor --fix` must NOT auto-clear a corrupted active task.
+
+        The right path is explicit `task delete --force <name>` or manual
+        task.json repair — both are user decisions. Auto-clearing would
+        leave a state where the user thinks the task is gone but the
+        directory is still in tasks/.
+        """
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        tasks_root = self.h.tmpdir / ".trellis-lite/tasks"
+        bad = next(
+            p for p in tasks_root.iterdir()
+            if p.is_dir() and p.name != "archive"
+        )
+        (bad / "task.json").write_text("garbage", encoding="utf-8")
+        ct_path = self.h.tmpdir / ".trellis-lite/.current-task"
+        before = ct_path.read_text() if ct_path.exists() else ""
+        r = self._run(["doctor", "--fix"])
+        after = ct_path.read_text() if ct_path.exists() else ""
+        # Pointer must be unchanged in --fix mode for corrupted-active path.
+        self.assertEqual(before, after,
+                          "doctor --fix must not auto-clear .current-task for corrupted active task")
+        # Exit non-zero so the user has to act.
+        self.assertNotEqual(r.returncode, 0,
+                             "doctor must surface corrupted active task as a problem")
+
 
 if __name__ == "__main__":
     unittest.main()

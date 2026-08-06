@@ -23,6 +23,8 @@ Trellis Lite 保留核心价值，砍掉所有非必要复杂度：
 
 ## 快速开始
 
+> **前置要求**：**bash 4.0+**（macOS 默认 `/bin/bash` 是 3.2.57，需 `brew install bash` 后用 `/usr/local/bin/bash install.sh ...`）。
+
 ```bash
 # 1. 安装到你的项目（默认支持所有平台）
 cd /path/to/your/project

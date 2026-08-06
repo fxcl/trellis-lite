@@ -84,6 +84,30 @@
 - 手工烟测覆盖 4 个 P1 修复 + install.sh rollback 路径（happy path + Python 失败 path）。
 - 测试总数 131 → **137**（+6），全部通过；loc 1442 → 1543（+101，含 helper + 注释 + 测试）。
 
+### 修复（第 8 轮 oracle-reviewer）
+
+第 8 轮审查深度确认 F46/F47/F48/F50/F52 五项修复全部生效且无新缺陷。**本轮 0 个 P1 代码缺陷**，3 个 P2 与 1 个 P3 均为 docs/correctness 同步问题，加上 1 个 P3 代码对称化（F53 `task delete` corrupted 预检，补齐 4 个 mutating commands 的对称契约）。
+
+- **`task delete` 在 `task.json` 损坏时拒绝（F53）**：F47/F48/F52 修复了 `start` / `archive` / `cancel` 在 corrupted 时的对称拒绝路径，但 `_task_delete` 仍用 `read_json`（lossy），corrupted 时 `data.get("status", "?")` 静默回到 `"?"`，打印**误导性** hint `"Cancel it first (task cancel X)"` — 但 `task cancel` 自身在 corrupted 时也直接拒绝（F52），把用户困在"先 cancel，但 cancel 又拒绝"的循环里。**F53 是 F47/F48/F52 系列的姊妹补丁**：用 `read_json_strict` 预检，corrupted 时报 `Refusing to delete: '.../task.json' is missing or corrupted. Run 'trellis.py doctor --fix' to repair, or 'task delete --force <name>' to discard.` + exit 1，**目录不删**（`shutil.rmtree` 在 corrupted 情况下是不可逆的，删除前必须保住失败路径）。`--force` 旁路保留，可作"最后手段"。新增 1 个测试覆盖。
+- **`test_archive_done_task_succeeds` 时间炸弹修复**：原测试 hardcoded `08-05-t`（trellis.py 用 `datetime.now().strftime("%m-%d")` 生成 `MM-DD-<slug>` 命名），跨日（8-05→8-06）后必失败。改为用 `datetime.now()` 动态生成 `today_prefix`，跨日期无 flakiness。
+
+### 文档（第 8 轮 oracle-reviewer）
+
+第 7 轮修复改变了 `task start` / `archive` / `cancel` 的实际行为（从 "corrupted 时返 0 + Warning" 改为 "返 1 拒绝"），但 `best-practices.md § 7` + `exit-codes.md` 的设计依据仍描述"非对称设计"。第 8 轮统一这两份文档的契约描述：
+
+- **`best-practices.md § 7.1` 退出码表格**：start/archive/cancel 行从"Warning + 返 0"改为"拒绝 + 返 1"，补"split-brain 风险"原理列；新增"统一原则"段：所有会修改活跃指针或目录位置的 mutating task 命令，corrupted `task.json` 一律返 1。
+- **`best-practices.md` 坑 6**：修法段从"start/archive/cancel 返 0 + Warning"改为"也返 1（自第 6-7 轮 oracle-reviewer 后）"。
+- **`best-practices.md` 决策清单 DO 行**：可逆/不可逆二分法改为"mutating task 操作依赖返 1 + split-brain 防护"。
+- **`exit-codes.md` 设计依据段 § "为什么 task finish 返 1 而 start/archive/cancel 返 0"**：整段重写为对称严格模式 + split-brain 依据 + 恢复路径（doctor / 手动 / --force 删除）+ 与查询类命令的区分 + 历史注（0.6.7 之前的非对称设计）。
+- **`design.md` § 5 CI 步骤 4**：`125 个` → `137 个`（F57）。
+- **`usage-guide.md` 自带测试套件**：测试文件级表格重写——`test_task.py` 19 → 38 / `test_session.py` 7 → 9 / `test_install.py` 4 → 15；新增 5 行覆盖之前完全未列出的测试模块（`test_doctor.py` 13 / `test_precommit.py` 4 / `test_slugify_fuzz.py` 6 / `test_status_machine.py` 20 / `test_usage_consistency.py` 15）；总表 40 → **137**（F58）。F59 同步测试运行命令补 `tests.test_status_machine tests.test_usage_consistency`（与 `design.md` 对齐）。
+
+### 测试（第 8 轮 oracle-reviewer）
+
+- `tests/test_task.py` 新增 `test_delete_rejects_corrupted_task_json`（F53 对称化 + 误导 hint 移除 + 目录存活断言）。
+- `tests/test_task.py` 修复 `test_archive_done_task_succeeds` 日期时间炸弹（hardcoded `08-05` → dynamic `today_prefix`）。
+- 138 个 unittest 全部通过（25.114s）。
+
 ---
 
 ## [0.6.9] - 2026-07-26
@@ -159,7 +183,7 @@ git log <last-tag>..HEAD --pretty=format:"%s" | grep -E "^(feat|fix|docs|chore|t
 1. 更新 [`trellis.py`](../.trellis-lite/scripts/trellis.py) 里的 `__version__ = "0.x.y"`
 2. 更新 [`README.md`](../README.md) 顶部版本号（如有）
 3. 在 `CHANGELOG.md` **顶部**添加新章节，把待发布版本的改动归类后列出
-4. 跑 `python3 -m unittest tests.test_init tests.test_install tests.test_precommit tests.test_session tests.test_slugify_fuzz tests.test_task tests.test_doctor tests.test_context_specs_help` 确认全绿
+4. 跑 `python3 -m unittest tests.test_init tests.test_install tests.test_precommit tests.test_session tests.test_slugify_fuzz tests.test_task tests.test_doctor tests.test_context_specs_help tests.test_status_machine tests.test_usage_consistency` 确认全绿
 5. `git tag 0.x.y` 并 `git push --tags`
 
 ### 不放进 CHANGELOG 的内容

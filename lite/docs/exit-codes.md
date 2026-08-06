@@ -34,14 +34,23 @@ POSIX 建议 1 = 一般错误，2 = 用法错误。但 Trellis Lite 的错误面
 
 这是用户**主动请求修改状态**，但当前状态不允许。区别于 `task list` 这种**被动查询**。
 
-### 为什么 `task finish` 在 `task.json` 损坏时返回 1，而 `task start` / `archive` / `cancel` 返回 0？
+### 为什么所有 mutating task 操作（`task finish` / `start` / `archive` / `cancel`）在 `task.json` 损坏时一致返回 1？
 
-这是有意的非对称设计，基于**副作用可逆性**：
+这是**对称设计**，基于 **split-brain 风险**：
 
-- **`task finish`**（严格 return 1）：finish 的核心副作用是 `clear_current_task()`。如果 task.json 损坏却继续清除活跃指针，用户会“丢失任务”且无法恢复。因此 finish 在 `set_status` 失败时**中止整个操作**，活跃指针保持不动，等用户修复后再试。
-- **`task start` / `archive` / `cancel`**（宽松 return 0）：这些命令的副作用（设置 current / 移动目录 / 清理指针）即使 status 字段没更新，也不造成不可逆的数据丢失——用户仍能看到目录、能手动修复 task.json。因此它们打印 Warning 但继续完成文件系统操作，返回 0。
+- 四个命令都会修改**活跃指针**或**目录位置**：`finish` 清空指针、`start` 切换指针、`cancel` 清空指针、`archive` 把目录挪到 `archive/YYYY-MM/`。
+- 若 `task.json` 损坏却继续执行副作用，后续 `task list` / `task finish` / `task cancel` 看到的将是"目录在 X 但 status 不可读"或"指针指向损坏任务"——元数据信任链断，下一步无法判断。
+- 因此这四个命令统一用 `read_json_strict(pre-task.json)` 预检：返回 `None`（缺失或损坏）即**中止 + 返回 1**，副作用完全不执行。
 
-简言之：**不可逆操作失败必须中止（return 1）；可恢复操作失败可以降级继续（return 0 + Warning）**。
+**恢复路径**（任选其一）：
+
+1. `python3 trellis.py doctor --fix`——自动诊断并提示恢复路径（推荐路径）
+2. 手动编辑 `task.json` / 从 git reflog 恢复
+3. `python3 trellis.py task delete --force <name>`——最后手段（不可逆）
+
+**与查询类命令的区别**：`task list` / `task current` / `specs` / `context` 在"空状态"时返 0（详见上一节），与 mutating 命令"操作前拒绝" 是两套并行约定，不冲突。
+
+> 历史注：早期实现（0.6.7 之前）`start` / `archive` / `cancel` 在 corrupted 时返 0 + Warning——这导致 § 7.1 表格的"非对称设计"措辞。第 6-7 轮 oracle-reviewer（F44-F52 修复）后，4 个命令统一为对称严格模式。
 
 ## 在 shell 中使用
 

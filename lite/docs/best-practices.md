@@ -401,10 +401,12 @@ Lite 的退出码遵循一条原则：**不可逆操作失败必须中止（retu
 
 | 命令 | task.json 损坏时行为 | 返回码 | 原理 |
 |---|---|---|---|
-| `task finish` | **拒绝、活跃指针不变** | 1 | finish 后调 `clear_current_task()` —— 指针丢失不可逆 |
-| `task start` | 调 set_status 返 False → 输出 Warning | 0 | 指针设置、状态没改都是可恢复的 |
-| `task archive` | 移动目录 + Warning | 0 | 即使 status 没写入，目录移动本身就是状态表达 |
-| `task cancel` | 写 cancelled 失败 → Warning | 0 | 目录保留，用户可手动修复 task.json |
+| `task finish` | **拒绝、活跃指针不变** | 1 | 副作用：调 `clear_current_task()` 清空指针——指针丢失不可逆 |
+| `task start` | **拒绝、活跃指针不变** | 1 | 副作用：调 `set_current_task()` 切换指针。corrupted 后切换 → 后续 finish/cancel 看不到元数据（split-brain） |
+| `task archive` | **拒绝、不移动目录** | 1 | 副作用：`shutil.move` 到 `archive/YYYY-MM/`。corrupted 后移动 → orphan（task list 看到 `[?]`） |
+| `task cancel` | **拒绝、活跃指针不变** | 1 | 副作用：清理活跃指针。corrupted 后清理 → split-brain（指针已清但 task.json 不可读） |
+
+**统一原则**：任何**会修改活跃指针或目录位置**的 mutating task 命令，遇到 `task.json` 缺失或损坏一律拒绝 + 返回 1，避免 split-brain。修复路径：`trellis.py doctor --fix`（推荐）/ `task delete --force <name>`（最后手段）。
 
 **使用示例**：
 
@@ -636,7 +638,7 @@ Active task: {trellis_current}
 
 **症状**：`task finish` 返回 1，活跃指针还在，状态没变 —— 你以为工具坏了。
 
-**修法**：**这正是设计意图**。`task finish` 在 task.json 损坏时会拒绝执行，因为它后续会调 `clear_current_task()` 清空活跃指针 —— 指针丢失不可逆。同样场景下 `task start` / `archive` / `cancel` 会返 0 + Warning（因为可恢复）。详见第七节“退出码语义”。
+**修法**：**这正是设计意图**。`task finish` 在 task.json 损坏时会拒绝执行，因为它后续会调 `clear_current_task()` 清空活跃指针 —— 指针丢失不可逆。`task start` / `task archive` / `task cancel` **也**返 1（自第 6-7 轮 oracle-reviewer 后），理由同样：corrupted metadata + 副作用 = split-brain。详见第七节"退出码语义"。
 
 ### 坑 7：在散文中提到 “Trellis Lite runtime” → uninstall 误报清理
 
@@ -800,7 +802,7 @@ AI 路径：
 - PRD 用动词 + 数字 + 验收点
 - **状态机异常时跑 `doctor --fix`**（不手动改 task.json）
 - **重装前先 `uninstall.sh .` + `install.sh . <name>`**（install 是幂等跳过，不是修复）
-- **不可逆操作依赖返 1（`task finish` / `task delete`）；可逆操作 Warning + 返 0（`task start` / `archive` / `cancel`）**
+- **mutating task 操作依赖返 1（`task finish` / `task start` / `task archive` / `task cancel` 在 corrupted `task.json` 时一致拒绝 + 副作用不执行，避免 split-brain）；可读操作总返 0（`task list` / `task current`）**
 - **遇到不可解释的 bug 先 `doctor [--fix]`，再看 `git log`**
 
 ### ❌ DON'T

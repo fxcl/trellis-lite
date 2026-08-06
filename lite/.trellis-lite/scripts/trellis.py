@@ -989,9 +989,37 @@ def _task_delete(args: list[str]) -> int:
     if task_dir is None:
         return 1
 
-    # Status check: refuse to delete non-cancelled tasks unless --force
-    data = read_json(task_dir / FILE_TASK_JSON)
-    status = data.get("status", "?")
+    # F53: pre-check with read_json_strict to refuse corrupted metadata
+    # BEFORE any disk mutation (shutil.rmtree on a corrupted task is
+    # irreversible — once the directory is gone, the only recovery is
+    # `git reflog` or backups). Without this guard, read_json returns
+    # {} for corrupted input, `data.get("status", "?")` falls back to
+    # "?", and the user sees the misleading hint "Cancel it first
+    # (task cancel X)" — but task cancel itself refuses on corrupted
+    # (F52), trapping the user in a recovery loop. Detect corrupt
+    # metadata explicitly and point at the right recovery path, matching
+    # the symmetric pattern used in `_task_start` / `_task_archive` /
+    # `_task_cancel`.
+    #
+    # F63: `--force` bypasses the corrupted-metadata guard. The non-force
+    # refusal message itself recommends `task delete --force <name>` as
+    # the recovery path; if --force also refused on corrupted metadata
+    # (as F53 originally did), the user following that hint would hit the
+    # same wall — `task cancel` refuses on corrupted (F52), `task delete`
+    # refuses on corrupted (F53), and `task delete --force` refused too,
+    # closing the only exit. --force is opt-in and the user has been told
+    # it discards the task, so the irreversible rmtree is intentional.
+    data = read_json_strict(task_dir / FILE_TASK_JSON)
+    corrupted = data is None
+    if corrupted and not force:
+        print(colored(
+            f"Refusing to delete: '{task_dir.name}/task.json' is missing or "
+            f"corrupted. Run 'trellis.py doctor --fix' to repair, or "
+            f"'task delete --force {task_dir.name}' to discard.",
+            C_RED,
+        ))
+        return 1
+    status = data.get("status", "?") if not corrupted else "?"
     if not force and status != "cancelled":
         print(colored(
             f"Refusing to delete task with status '{status}'. "
@@ -1421,7 +1449,16 @@ def _check_workspace_dir(fix: bool, warnings: list[str]) -> Path | None:
 
 
 def _check_current_task(tdir: Path, fix: bool, problems: list[str]) -> None:
-    """Check #5: .current-task pointer must resolve to a real task dir."""
+    """Check #5: .current-task pointer must resolve to a real task dir.
+
+    F55: also flag corrupted task.json (was previously `✓ Active task: <name>
+    (?)` which falsely implied health). `task start` / `task finish` /
+    `task cancel` all refuse on corrupted metadata (F44/F47/F48/F52), so
+    doctor must surface this as a Problem, not a green check. We do NOT
+    auto-clear the pointer in --fix mode here because the right path is
+    either manual repair or explicit `task delete --force <name>` — the
+    user should consciously decide which.
+    """
     current = get_current_task()
     if not current:
         print(colored("  ·", C_DIM), "No active task (informational)")
@@ -1437,22 +1474,76 @@ def _check_current_task(tdir: Path, fix: bool, problems: list[str]) -> None:
             problems.pop()
             print(colored("    ↳", C_DIM), "cleared stale .current-task pointer")
         return
-    data = read_json(ct_path / FILE_TASK_JSON)
+    # F55: read_json_strict so corrupted metadata surfaces as Problem.
+    # Previously `read_json` returned `{}` for corrupted input → status="?"
+    # → printed `✓` (green check) — inconsistent with the F44/F47/F48/F52
+    # refusal behaviour in `task` commands.
+    data = read_json_strict(ct_path / FILE_TASK_JSON)
+    if data is None:
+        problems.append(
+            f".current-task points to corrupted task: {ct_path.name}"
+        )
+        print(colored(
+            "  ⚠", C_YELLOW,
+        ),
+            f"Active task '{ct_path.name}' has corrupted task.json — "
+            f"`task start/finish/cancel` will refuse; run 'task delete "
+            f"--force {ct_path.name}' or repair task.json manually.")
+        return
     status = data.get("status", "?")
     print(colored("  ✓", C_GREEN), f"Active task: {ct_path.name} ({status})")
 
 
 def _check_task_integrity(tdir: Path, problems: list[str]) -> None:
-    """Check #6: every task dir under tasks/ must have task.json."""
+    """Check #6: every task dir under tasks/ must have task.json.
+
+    F54: also recurses into tasks/archive/<YYYY-MM>/<name>/ to flag
+    orphan or corrupted archived tasks. Previously only tasks/ top-level
+    was scanned, so a corrupted task.json inside tasks/archive/2026-MM/
+    was invisible to doctor — `task list --all` reported `[?]` but
+    doctor gave no actionable signal. The fix uses `read_json_strict` so
+    presence alone isn't enough: a file that exists but cannot be
+    parsed (half-synced git checkout, manual edit gone wrong, partial
+    write) is also surfaced as a Problem.
+    """
     tasks_dir = tdir / DIR_TASKS
     if not tasks_dir.is_dir():
         return
+
+    def _check_one(t: Path, scope: str) -> None:
+        """Check a single task dir; append problems if missing or corrupt."""
+        task_json = t / FILE_TASK_JSON
+        if not task_json.is_file():
+            problems.append(
+                f"orphan task dir (no {FILE_TASK_JSON}): {scope}{t.name}"
+            )
+            print(colored("  ✗", C_RED),
+                  f"orphan: {scope}{t.name} (no task.json)")
+            return
+        # F54: present-but-unreadable is also a Problem. Catches partial
+        # writes / manual edits / partial git checkouts where the file
+        # exists but read_json_strict returns None.
+        if read_json_strict(task_json) is None:
+            problems.append(
+                f"corrupted task.json: {scope}{t.name}"
+            )
+            print(colored("  ✗", C_RED),
+                  f"corrupted task.json: {scope}{t.name}")
+
     for t in tasks_dir.iterdir():
-        if not t.is_dir() or t.name == DIR_ARCHIVE:
+        if not t.is_dir():
             continue
-        if not (t / FILE_TASK_JSON).is_file():
-            problems.append(f"orphan task dir (no {FILE_TASK_JSON}): {t.name}")
-            print(colored("  ✗", C_RED), f"orphan: {t.name} (no task.json)")
+        if t.name == DIR_ARCHIVE:
+            # archive/ is a year-month container — recurse one level.
+            for month_dir in t.iterdir():
+                if not month_dir.is_dir():
+                    continue
+                scope = f"{DIR_ARCHIVE}/{month_dir.name}/"
+                for task in month_dir.iterdir():
+                    if task.is_dir():
+                        _check_one(task, scope)
+            continue
+        _check_one(t, "")
 
 
 def _check_journal_numbering(workspace: Path, warnings: list[str]) -> None:

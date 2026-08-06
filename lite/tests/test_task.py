@@ -349,6 +349,12 @@ class TestTaskLifecycle(unittest.TestCase):
 
     def test_archive_done_task_succeeds(self) -> None:
         """F32 control: archiving a done task is the happy path and must succeed."""
+        # Use today's date prefix (trellis.py generates `MM-DD-<slug>` names
+        # via `date_prefix()` = `datetime.now().strftime("%m-%d")`). Hardcoding
+        # "08-05" made this test a time bomb — it only ran green on the day it
+        # was written. Make the assertion robust across midnight rollover too.
+        from datetime import datetime
+        today_prefix = datetime.now().strftime("%m-%d")
         self.h.run(["task", "create", "T", "--slug", "t"])
         self.h.run(["task", "start", "t"])
         self.h.run(["task", "finish"])
@@ -363,7 +369,7 @@ class TestTaskLifecycle(unittest.TestCase):
         # find a month dir containing the task
         months = [p for p in archive.iterdir() if p.is_dir()]
         self.assertEqual(len(months), 1, f"expected 1 month, got {months}")
-        self.assertTrue((months[0] / "08-05-t").is_dir(),
+        self.assertTrue((months[0] / f"{today_prefix}-t").is_dir(),
                         "task dir must be moved to archive/<month>/")
 
     def test_delete_refused_shows_tip_when_pointer_still_active(self) -> None:
@@ -482,5 +488,60 @@ class TestTaskLifecycle(unittest.TestCase):
         self.assertIn("missing or corrupted", r.stdout)
         self.assertIn("Refusing to cancel", r.stdout)
         self.assertNotIn("Task cancelled", r.stdout)
+
+    def test_delete_force_succeeds_on_corrupted_task_json(self) -> None:
+        """F63: --force must bypass the corrupted-metadata guard.
+
+        The non-force refusal message recommends `task delete --force` as the
+        recovery path. If --force also refused on corrupted metadata, the user
+        following that hint would hit the same wall: task cancel refuses on
+        corrupted (F52), task delete refuses on corrupted (F53), and
+        task delete --force would refuse too — closing the only exit.
+        """
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        d = self._task_path("t")
+        assert d is not None
+        (d / "task.json").write_text("garbage", encoding="utf-8")
+        r = self.h.run(["task", "delete", "t", "--force"])
+        # --force is the explicit recovery path → must succeed.
+        self.assertEqual(r.returncode, 0,
+                         f"--force must delete corrupted task, got:\n{r.stdout}")
+        self.assertIn("Task deleted", r.stdout)
+        self.assertIsNone(self._task_path("t"),
+                          "corrupted task dir must be gone after --force delete")
+
+    def test_delete_rejects_corrupted_task_json(self) -> None:
+        """F53: deleting a task with corrupted task.json must refuse cleanly.
+
+        Previously `_task_delete` used `read_json` (lossy), so corrupted
+        input returned `{}` and fell through to `data.get("status", "?")`
+        — printing the misleading "Refusing to delete with status '?'. Cancel
+        it first (task cancel X)" hint. But task cancel itself refuses on
+        corrupted (F52), so the user was sent in a recovery loop. The fix
+        uses `read_json_strict` and prints an explicit "missing or corrupted"
+        message pointing to `doctor --fix` or `--force`.
+        """
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        task_dir = self.h.tmpdir / ".trellis-lite/tasks"
+        d = None
+        for x in task_dir.iterdir():
+            if x.is_dir() and x.name != "archive":
+                d = x
+                break
+        assert d is not None
+        (d / "task.json").write_text("garbage", encoding="utf-8")
+        r = self.h.run(["task", "delete", "t"])
+        # Must refuse (non-zero exit) on corrupted metadata.
+        self.assertNotEqual(r.returncode, 0, "corrupted task.json must refuse delete")
+        self.assertIn("missing or corrupted", r.stdout)
+        self.assertIn("Refusing to delete", r.stdout)
+        # Must NOT suggest the (now-broken) "Cancel it first" hint that would
+        # trap the user — cancel itself refuses on corrupted (F52).
+        self.assertNotIn("Cancel it first", r.stdout)
+        # Must NOT silently go through with the delete.
+        self.assertNotIn("Task deleted", r.stdout)
+        # Directory must still exist (we refused BEFORE shutil.rmtree ran).
+        self.assertIsNotNone(self._task_path("t"),
+                             "task dir must survive refused delete on corrupted task.json")
 
 

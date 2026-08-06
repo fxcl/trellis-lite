@@ -316,19 +316,25 @@ Trellis Lite 仓库自带 137 个 unittest 覆盖全部命令 + 安装脚本 + d
 # 从仓库根运行（注意：Python 3.9+ 需要 `tests.` 包前缀，相对 import 才能工作）
 python3 -m unittest tests.test_init tests.test_task tests.test_session \
                   tests.test_doctor tests.test_precommit tests.test_install \
-                  tests.test_slugify_fuzz tests.test_context_specs_help
+                  tests.test_slugify_fuzz tests.test_context_specs_help \
+                  tests.test_status_machine tests.test_usage_consistency
 
 # 运行某个模块
 python3 -m unittest tests.test_task -v
 ```
 
-| 测试文件 | 覆盖范围 |
-|---|---|
-| `test_init.py` | 7 个：目录创建、校验、幂等 |
-| `test_task.py` | 19 个：create / start / finish / archive / cancel / list，含路径穿越、CJK slug、连号保护、幂等重启 |
-| `test_session.py` | 7 个：journal 追加、commit SHA 校验（合法/非法/多长度）、未初始化、日志轮转、非编号文件过滤 |
-| `test_context_specs_help.py` | 10 个：repo-root 守卫(4) / context(3) / specs(2) / help(1) |
-| `test_install.py` | 4 个：默认 / claude / qoder+cline / 运行时路径清理 |
+| 测试文件 | 测试数 | 覆盖范围 |
+|---|---|---|
+| `test_init.py` | 7 | 目录创建、校验、幂等 |
+| `test_task.py` | 38 | create / start / finish / archive / cancel / list / delete，含路径穿越、CJK slug、连号保护、幂等重启、corrupted `task.json` 拒绝（F44-F52 修复） |
+| `test_session.py` | 9 | journal 追加、commit SHA 校验（合法/非法/多长度）、未初始化、日志轮转、非编号文件过滤 |
+| `test_context_specs_help.py` | 10 | repo-root 守卫(4) / context(3) / specs(2) / help(1) |
+| `test_install.py` | 15 | 默认 / claude / qoder+cline / 运行时路径清理 / uninstall 全部路径（含 O9/O11/O14/O16/O17） |
+| `test_doctor.py` | 13 | 9 项健康检查、`--fix` 自愈、stray-file 恢复（F46） |
+| `test_precommit.py` | 4 | hook 安装/卸载、`set -e` 兼容性、trellis marker 锚定 |
+| `test_slugify_fuzz.py` | 6 | CJK / 表情 / 长串 / 边界字符的 slug 化与防 glob 注入 |
+| `test_status_machine.py` | 20 | `ALLOWED_TRANSITIONS` 常量 + `set_status` 行为（含 corrupted 与并发场景的契约边界） |
+| `test_usage_consistency.py` | 15 | USAGE 字典与端到端 `cmd_*` 的 usage 输出对齐 |
 
 CI：`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上自动跑（推 main 或 PR 触发）。
 

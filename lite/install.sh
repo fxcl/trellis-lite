@@ -31,6 +31,29 @@ CYAN='\033[0;36m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+# --- F62: macOS bash 3.2 compatibility gate ---
+#
+# macOS /bin/bash is 3.2.57 (last GPLv2 release), which lacks bash 4.0+
+# features used below: `read -ra` (validate_platforms loop) and
+# `arr+=()` syntax (F50 INSTALLED_FILES, INSTALLED_PLATFORMS). On bash
+# 3.2 the script first dies with a cryptic `syntax error near
+# unexpected token '('` — and worse, F50's `trap rollback ERR` may
+# already have started cleanup of partially-installed files because
+# the first failing line is mid-install. Detect up front with a clear
+# upgrade hint instead, so users get an actionable error before any
+# state is touched.
+if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+    echo -e "${RED}Error: bash 4.0+ required (you have $BASH_VERSION).${NC}" >&2
+    echo "" >&2
+    echo -e "macOS users: install via Homebrew:" >&2
+    echo -e "  brew install bash" >&2
+    echo -e "then re-run with the new shell:" >&2
+    echo -e "  /usr/local/bin/bash install.sh . <name>" >&2
+    echo "" >&2
+    echo -e "Linux users: your distro's bash 4+ is at /usr/bin/bash." >&2
+    exit 1
+fi
+
 # --- Parse args ---
 
 TARGET_DIR=""

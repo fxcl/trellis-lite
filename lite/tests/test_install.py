@@ -13,8 +13,37 @@ from ._helpers import INSTALL_SH, LITE_ROOT
 UNINSTALL_SH = LITE_ROOT / "uninstall.sh"
 
 
+def _has_bash_4plus() -> bool:
+    """Probe whether the runtime bash is new enough to run install.sh.
+
+    F62: install.sh (and uninstall.sh) require bash 4+ for `read -ra` and
+    `arr+=()` syntax. macOS /bin/bash is 3.2.57 (last GPLv2), so the install
+    script now exits early on macOS without a Homebrew bash upgrade. Tests
+    that exercise the install/uninstall lifecycle should skip rather than
+    fail when the host shell is too old — the behaviour under test is the
+    bash script's logic, which itself enforces this same constraint at
+    runtime. CI (Linux, bash 5.x) runs them; macOS dev runs skip them with
+    a clear message instead of polluting the failure count.
+    """
+    try:
+        out = subprocess.run(
+            ["bash", "-c", 'echo "${BASH_VERSINFO[0]}"'],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.returncode == 0 and out.stdout.strip().isdigit() \
+        and int(out.stdout.strip()) >= 4
+
+
 class TestInstall(unittest.TestCase):
     def setUp(self) -> None:
+        if not _has_bash_4plus():
+            self.skipTest(
+                "install.sh requires bash 4+ (F62); macOS /bin/bash is "
+                "3.2.57. Install via `brew install bash` and re-run with "
+                "/usr/local/bin/bash, or use Linux CI."
+            )
         self.tmpdir = Path(tempfile.mkdtemp(prefix="trellis-install-"))
 
     def tearDown(self) -> None:
@@ -97,6 +126,15 @@ class TestInstall(unittest.TestCase):
 
 class TestUninstall(unittest.TestCase):
     def setUp(self) -> None:
+        # F62: even though uninstall.sh itself is bash-3.2 safe, the
+        # install_all() seed step below runs install.sh which gates on bash
+        # 4+. Without this skip, every TestUninstall test errors out at
+        # setUp because install cannot complete on macOS bash 3.2.
+        if not _has_bash_4plus():
+            self.skipTest(
+                "install.sh requires bash 4+ (F62); TestUninstall setUp "
+                "seeds with install.sh, so the whole class needs bash 4+."
+            )
         self.tmpdir = Path(tempfile.mkdtemp(prefix="trellis-uninstall-"))
         # Initialize as a git repo so install.sh triggers the pre-commit hook
         # installation step (O9 fix path). Without .git/, install.sh silently
