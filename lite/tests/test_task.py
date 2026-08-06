@@ -78,6 +78,37 @@ class TestTaskLifecycle(unittest.TestCase):
         self.assertIn("second", ct.read_text())
         self.assertNotIn("first", ct.read_text())
 
+    def test_create_replace_closes_old_in_progress(self) -> None:
+        """--replace must close the old active task so `task list` doesn't
+        show two in_progress tasks — the "one task at a time" invariant that
+        _task_start itself warns about. Previously --replace only repointed
+        .current-task, leaving the old task stranded in in_progress."""
+        self.h.run(["task", "create", "First", "--slug", "first"])
+        self.h.run(["task", "start", "first"])  # first → in_progress
+        self.h.run(["task", "create", "Second", "--slug", "second", "--replace"])
+        first_dir = find_task(self.h.tmpdir, "first")
+        first_data = json.loads((first_dir / "task.json").read_text())
+        self.assertEqual(first_data["status"], "done",
+                         f"--replace must close old task to done, got "
+                         f"{first_data['status']}")
+        self.assertIn("finished", first_data,
+                      "closed old task must get a finished timestamp")
+        # Second is the new active, in planning (not auto-started).
+        second_dir = find_task(self.h.tmpdir, "second")
+        second_data = json.loads((second_dir / "task.json").read_text())
+        self.assertEqual(second_data["status"], "planning")
+
+    def test_create_replace_closes_old_planning(self) -> None:
+        """--replace on a planning old task (created but never started) must
+        also close it to done — planning→done is a legal forward transition."""
+        self.h.run(["task", "create", "First", "--slug", "first"])  # planning
+        self.h.run(["task", "create", "Second", "--slug", "second", "--replace"])
+        first_dir = find_task(self.h.tmpdir, "first")
+        first_data = json.loads((first_dir / "task.json").read_text())
+        self.assertEqual(first_data["status"], "done",
+                         f"planning old task must close to done, got "
+                         f"{first_data['status']}")
+
     # ---- start ------------------------------------------------------------
 
     def test_start_sets_in_progress(self) -> None:
@@ -90,12 +121,26 @@ class TestTaskLifecycle(unittest.TestCase):
         self.assertIn("started", data)
 
     def test_start_warns_on_other_in_progress(self) -> None:
+        # F20: _task_start emits a single consolidated warning when another
+        # task is still in_progress. Set this up by manually writing A's
+        # task.json to in_progress (a legacy/concurrent task that was started
+        # but never closed), clearing the active pointer, creating B, then
+        # starting B. We can't use --replace to leave A in_progress anymore
+        # because --replace now closes the old task — that invariant is
+        # covered by test_create_replace_closes_old_in_progress below.
+        import json as _json
         self.h.run(["task", "create", "A", "--slug", "a"])
-        self.h.run(["task", "start", "a"])
-        # Take over via --replace to create B while A is still in_progress
-        self.h.run(["task", "create", "B", "--slug", "b", "--replace"])
+        a_dir = find_task(self.h.tmpdir, "a")
+        (a_dir / "task.json").write_text(_json.dumps({
+            "title": "A", "slug": "a", "status": "in_progress",
+            "created": "2026-01-01T00:00:00", "branch": "main",
+            "started": "2026-01-01T00:00:00",
+        }), encoding="utf-8")
+        # Clear the active pointer so B can be created without --replace.
+        (self.h.tmpdir / ".trellis-lite/.current-task").unlink()
+        self.h.run(["task", "create", "B", "--slug", "b"])
         r = self.h.run(["task", "start", "b"])
-        # F20: single consolidated warning (not one line per task)
+        # Single consolidated warning (not one line per task).
         self.assertEqual(r.stdout.count("Warning"), 1,
                          f"expected single consolidated warning, got:\n{r.stdout}")
         self.assertIn("1 other task", r.stdout)
@@ -252,6 +297,21 @@ class TestTaskLifecycle(unittest.TestCase):
         self.h.run(["task", "cancel", "t"])
         ct = self.h.tmpdir / ".trellis-lite/.current-task"
         self.assertFalse(ct.exists())
+
+    def test_current_warns_on_corrupted_active_task(self) -> None:
+        """`task current` must warn when the active task.json is corrupted,
+        not silently omit Title/Status — the AI calls this to orient and a
+        silent drop hides the same state doctor flags (F55). Exit 0: it's a
+        read."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        d = find_task(self.h.tmpdir, "t")
+        (d / "task.json").write_text("garbage", encoding="utf-8")
+        r = self.h.run(["task", "current"])
+        self.assertEqual(r.returncode, 0, "task current is a read — must stay exit 0")
+        self.assertIn("corrupted", r.stdout)
+        self.assertIn("doctor", r.stdout)
+        # Must NOT print the silent `Title: ?` fallback that hides corruption.
+        self.assertNotIn("Title:  ?", r.stdout)
 
     # ---- list -------------------------------------------------------------
 

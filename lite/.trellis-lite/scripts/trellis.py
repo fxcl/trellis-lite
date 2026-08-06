@@ -633,6 +633,19 @@ def _task_create(args: list[str]) -> int:
     (task_dir / "prd.md").write_text(prd_content, encoding="utf-8")
 
     if existing and replace:
+        # Take over means the old active task is no longer the focus. Close it
+        # so `task list` doesn't show two tasks with in_progress / planning
+        # alongside the new one — the "one task at a time" invariant that
+        # _task_start itself warns about. Forward-only transitions make
+        # done a safe target from both planning and in_progress; set_status
+        # is idempotent (done→done returns True) and rejects terminal states
+        # (archived/cancelled can't reach done) by returning False, which we
+        # ignore — a terminal old task is left as-is and the user can clean
+        # it up explicitly. We DO NOT clear .current-task here; set_current_task
+        # below repoints it to the new task.
+        old_dir = get_repo_root() / existing
+        if old_dir.is_dir():
+            set_status(old_dir, "done", when="finished")
         print(colored(
             f"Note: replaced active task '{existing}' with '{dir_name}'.",
             C_YELLOW,
@@ -743,10 +756,20 @@ def _task_current(args: list[str]) -> int:
 
     print(f"Active task: {current}")
 
-    # Show status
+    # Show status. Use read_json_strict so a corrupted task.json surfaces as
+    # an explicit warning instead of silently omitting Title/Status — the AI
+    # calls `task current` to orient, and a silent drop hides the same
+    # corrupted state that `doctor` flags as a problem (F55). Keep exit 0:
+    # `task current` is a read (see exit-codes.md §"empty state returns 0").
     task_dir = get_repo_root() / current
-    task_json = read_json(task_dir / FILE_TASK_JSON)
-    if task_json:
+    task_json = read_json_strict(task_dir / FILE_TASK_JSON)
+    if task_json is None:
+        print(colored(
+            "  Warning: task.json is missing or corrupted — "
+            "run 'trellis.py doctor --fix' to repair.",
+            C_YELLOW,
+        ))
+    else:
         print(f"  Title:  {task_json.get('title', '?')}")
         print(f"  Status: {task_json.get('status', '?')}")
 
@@ -1157,14 +1180,26 @@ def cmd_context(args: list[str]) -> int:
     else:
         print(colored("  Developer: (not initialized — run 'trellis.py init <name>')", C_YELLOW))
 
-    # Current task
+    # Current task. read_json_strict so a corrupted active task surfaces as
+    # a warning line instead of printing `Title: ?` / `Status: ?` — which is
+    # indistinguishable from a legitimately untitled task and hides the same
+    # corrupted state doctor flags as a problem (F55). `context` is the AI's
+    # cross-session resume entry point; it must not silently degrade. Keep
+    # exit 0: context is a read with no error path (exit-codes.md).
     current = get_current_task()
     if current:
         task_dir = repo / current
-        data = read_json(task_dir / FILE_TASK_JSON)
+        data = read_json_strict(task_dir / FILE_TASK_JSON)
         print(f"  Active task: {current}")
-        print(f"    Title:  {data.get('title', '?')}")
-        print(f"    Status: {data.get('status', '?')}")
+        if data is None:
+            print(colored(
+                "    Warning: task.json is missing or corrupted — "
+                "run 'trellis.py doctor --fix' to repair.",
+                C_YELLOW,
+            ))
+        else:
+            print(f"    Title:  {data.get('title', '?')}")
+            print(f"    Status: {data.get('status', '?')}")
 
         artifacts = []
         for f in ["prd.md", "design.md"]:
@@ -1483,12 +1518,16 @@ def _check_current_task(tdir: Path, fix: bool, problems: list[str]) -> None:
         problems.append(
             f".current-task points to corrupted task: {ct_path.name}"
         )
-        print(colored(
-            "  ⚠", C_YELLOW,
-        ),
-            f"Active task '{ct_path.name}' has corrupted task.json — "
-            f"`task start/finish/cancel` will refuse; run 'task delete "
-            f"--force {ct_path.name}' or repair task.json manually.")
+        # Icon matches problem-level severity: this drives doctor's exit code
+        # to 1 (problems → `✗ Found N problem(s)` in _doctor_finish), so the
+        # inline marker must be `✗` + C_RED like the other problem branches
+        # (missing .current-task target at line 1469, orphan/corrupted in
+        # _check_task_integrity). Using `⚠`/C_YELLOW here mislabelled a
+        # blocking problem as a non-blocking warning.
+        print(colored("  ✗", C_RED),
+              f"Active task '{ct_path.name}' has corrupted task.json — "
+              f"`task start/finish/cancel` will refuse; run 'task delete "
+              f"--force {ct_path.name}' or repair task.json manually.")
         return
     status = data.get("status", "?")
     print(colored("  ✓", C_GREEN), f"Active task: {ct_path.name} ({status})")

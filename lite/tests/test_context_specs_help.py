@@ -79,6 +79,23 @@ class TestContext(unittest.TestCase):
         r = self.h.run(["context"])
         self.assertIn("Latest session", r.stdout)
 
+    def test_context_warns_on_corrupted_active_task(self) -> None:
+        """A corrupted active task.json must surface as a warning in `context`
+        (the AI's cross-session resume entry point), not silently print
+        `Title: ?` / `Status: ?` which is indistinguishable from a legitimately
+        untitled task. Matches the F55 signal doctor gives for the same state."""
+        from ._helpers import find_task
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        bad = find_task(self.h.tmpdir, "t")
+        (bad / "task.json").write_text("garbage not json", encoding="utf-8")
+        r = self.h.run(["context"])
+        self.assertEqual(r.returncode, 0, "context is a read — must stay exit 0")
+        self.assertIn("corrupted", r.stdout)
+        self.assertIn("doctor", r.stdout)
+        # Must NOT print the silent `Title: ?` / `Status: ?` fallback.
+        self.assertNotIn("Title:  ?", r.stdout)
+        self.assertNotIn("Status: ?", r.stdout)
+
 
 class TestSpecs(unittest.TestCase):
     def setUp(self) -> None:
