@@ -797,13 +797,36 @@ def _task_finish(args: list[str]) -> int:
         print(colored(f"Warning: {len(dirty.splitlines())} uncommitted change(s) in working tree", C_YELLOW))
 
     # Update task status via the central state-machine helper.
-    # This refuses cleanly on missing/corrupted task.json so the active pointer
-    # is never cleared on a downstream exception.
+    # P3-4 (round 9): mirror _task_start's layered pre-checks instead of
+    # reporting every set_status False as "missing or corrupted". The other
+    # failure mode — terminal state — is only reachable when .current-task
+    # was hand-edited onto a cancelled/archived task, but the old message
+    # would have sent the user to doctor --fix for a problem doctor can't
+    # fix; point at the real cause instead.
     task_dir = get_repo_root() / current
-    if not set_status(task_dir, "done", when="finished"):
+    data = read_json_strict(task_dir / FILE_TASK_JSON)
+    if data is None:
         print(colored(
-            f"Error: task.json is missing or corrupted; refusing to finish. "
-            f"Run 'trellis.py doctor --fix' to repair.",
+            f"Error: '{current}/task.json' is missing or corrupted; "
+            f"refusing to finish. Run 'trellis.py doctor --fix' to repair.",
+            C_RED,
+        ))
+        return 1
+    status = data.get("status")
+    if status in ("archived", "cancelled"):
+        print(colored(
+            f"Error: cannot finish a task in terminal state '{status}'. "
+            f"The .current-task pointer likely needs manual cleanup — "
+            f"run 'trellis.py doctor' to inspect.",
+            C_RED,
+        ))
+        return 1
+    if not set_status(task_dir, "done", when="finished"):
+        # Reachable only when the file passed the pre-check but became
+        # unwritable mid-operation; refuse without clearing the pointer.
+        print(colored(
+            f"Error: failed to update '{current}/task.json'; refusing to "
+            f"clear the active pointer.",
             C_RED,
         ))
         return 1
@@ -1316,14 +1339,16 @@ def print_help() -> None:
     print(colored(f"v{__version__} — Single-file task & session manager for agile solo developers.\n", C_DIM))
     print("Commands:")
     print(f"  {colored('init', C_GREEN)} <name>                    Initialize developer identity")
-    print(f"  {colored('task create', C_GREEN)} \"<title>\" [--slug <s>]  Create a new task")
+    print(f"  {colored('task create', C_GREEN)} \"<title>\" [--slug <s>] [--replace]")
+    print(f"  {'':>34}--replace: take over from the active task (closes it)")
     print(f"  {colored('task start', C_GREEN)} <name>               Activate a task (status → in_progress)")
     print(f"  {colored('task current', C_GREEN)}                   Show active task")
     print(f"  {colored('task finish', C_GREEN)}                    Deactivate current task")
     print(f"  {colored('task archive', C_GREEN)} <name>            Archive a completed task")
     print(f"  {colored('task cancel', C_GREEN)} <name>            Cancel an abandoned task (keeps directory)")
     print(f"  {colored('task list', C_GREEN)} [--all]                   List tasks (--all includes archive)")
-    print(f"  {colored('task delete', C_GREEN)} <name>            Delete a cancelled task permanently")
+    print(f"  {colored('task delete', C_GREEN)} <name> [--force]         Delete a cancelled task permanently")
+    print(f"  {'':>34}--force: skip status/corrupted checks (last resort)")
     print(f"  {colored('session', C_GREEN)} --title \"T\" --summary \"S\"  Record a session journal entry")
     print(f"  {colored('context', C_GREEN)}                       Print full session context")
     print(f"  {colored('specs', C_GREEN)}                         List available spec files")
@@ -1419,6 +1444,31 @@ def _recover_developer_name(tdir: Path) -> str:
     return "developer"
 
 
+def _warn_orphaned_workspaces(tdir: Path, recovered: str, warnings: list[str]) -> None:
+    """P3-5c (round 9): surface workspaces the recovered identity can't see.
+
+    When doctor --fix falls back to a name that doesn't match every existing
+    workspace subdir (e.g. generic "developer" with 2+ real workspaces),
+    the unmatched subdirs' journals become unreachable from session/context.
+    Previously this happened silently; now the user gets one warning naming
+    the orphaned dirs and how to switch identity (`init <name>`).
+    """
+    ws_root = tdir / DIR_WORKSPACE
+    if not ws_root.is_dir():
+        return
+    orphaned = sorted(p.name for p in ws_root.iterdir()
+                      if p.is_dir() and p.name != recovered)
+    if orphaned:
+        warnings.append(
+            f"workspace subdirs unreachable with developer='{recovered}': "
+            f"{', '.join(orphaned)}"
+        )
+        print(colored("  ⚠", C_YELLOW),
+              f"workspace/{', workspace/'.join(orphaned)}/ journals are "
+              f"unreachable with developer='{recovered}' — run "
+              f"'init <name>' to switch identity.")
+
+
 def _check_developer_file(tdir: Path, fix: bool, problems: list[str], warnings: list[str]) -> None:
     """Check #2: .developer must exist and contain name=..."""
     dev_file = tdir / FILE_DEVELOPER
@@ -1431,6 +1481,7 @@ def _check_developer_file(tdir: Path, fix: bool, problems: list[str], warnings: 
             problems.pop()
             print(colored("    ↳", C_DIM),
                   f"wrote default developer={recovered}")
+            _warn_orphaned_workspaces(tdir, recovered, warnings)
         return
     dev = get_developer()
     if dev:
@@ -1451,6 +1502,7 @@ def _check_developer_file(tdir: Path, fix: bool, problems: list[str], warnings: 
             warnings.pop()
             print(colored("    ↳", C_DIM),
                   f"restored developer name={recovered}")
+            _warn_orphaned_workspaces(tdir, recovered, warnings)
 
 
 def _check_required_subdirs(tdir: Path, fix: bool, warnings: list[str]) -> None:

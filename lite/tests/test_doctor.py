@@ -163,6 +163,25 @@ class TestDoctor(unittest.TestCase):
         self.assertIn("Developer: tester", r3.stdout)
         self.assertNotIn("no name= line", r3.stdout)
 
+    def test_doctor_fix_warns_about_orphaned_workspaces(self) -> None:
+        """P3-5c (round 9): when --fix falls back to a developer name that
+        doesn't cover every workspace subdir (2+ real workspaces → generic
+        'developer'), the unmatched journals become unreachable from
+        session/context. Previously this orphaning was silent; --fix must
+        now surface one warning naming the dirs and how to switch."""
+        dev_file = self.h.tmpdir / ".trellis-lite/.developer"
+        dev_file.unlink()
+        ws_root = self.h.tmpdir / ".trellis-lite/workspace"
+        # tester/ exists from the Harness; add a second so there's no
+        # single candidate and --fix falls back to 'developer'.
+        (ws_root / "alice").mkdir(exist_ok=True)
+        r = self._run(["doctor", "--fix"])
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(dev_file.read_text().strip(), "name=developer")
+        self.assertIn("unreachable", r.stdout)
+        self.assertIn("alice", r.stdout)
+        self.assertIn("tester", r.stdout)
+
     def test_doctor_fix_defaults_name_line_when_workspace_ambiguous(self) -> None:
         """P2-1 fallback: .developer half-written AND workspace/ has 2+
         subdirs → --fix writes the generic 'developer' default without

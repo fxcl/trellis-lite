@@ -133,6 +133,19 @@
 - `tests/test_install.py` 新增 `_has_bash_4plus()` 探测，macOS bash 3.2 下 install/uninstall 类测试 `skipTest`（CI Linux bash 5+ 正常跑）。
 - 151 个 unittest 全部通过（macOS 上 skipped=15 为 bash 版本 skip，非失败）。
 
+### 改进（第 9 轮 P3 跟进）
+
+- **`task finish` 分层报错（P3-4）**：之前 `set_status` 返回 `False` 一律报 "missing or corrupted"，但终态任务（`.current-task` 被手改指向 cancelled/archived 任务）也会命中同一路径，把用户导向 doctor 修不了的问题。新行为：与 `task start` 对称的分层预检 —— corrupted 指向 `doctor --fix`；终态报 `terminal state '<s>'` + 提示检查指针；中途写失败单独报错。所有拒绝路径均不清活跃指针。
+- **`doctor --fix` developer 回落时警告 orphan workspace（P3-5c）**：之前回落到 `developer`（或任何不覆盖全部子目录的名字）时，其余 workspace 子目录的 journal 静默不可达。新行为：输出一条 warning 列出不可达目录 + 提示 `init <name>` 切换身份。
+- **`help` 展示 `--replace` / `--force` 标志（P3-6）**：`task create` / `task delete` 行补参数及一行说明，提高可发现性。
+
+### 测试（第 9 轮 P3 跟进）
+
+- `--replace` 三边界测试（P3-5a）：旧任务目录缺失（stale 指针）/ 已终态（cancelled 不被触碰）/ corrupted（原文件保留待 doctor），均断言 create 成功 + 无部分状态。
+- `--force` 删除两处补 `.current-task` 清理断言（P3-5b，防未来 refactor 静默丢指针清理）。
+- finish 终态分层报错测试（P3-4）+ orphan workspace 警告测试（P3-5c）。
+- 测试总数 151 → **156**，全部通过；trellis.py 1704 → 1756 行；数字同步 README / design / usage-guide / best-practices（P3-3 同时修正 §7.1 标题与示例的“非对称”残留表述、exit-codes.md 的 `pre-task.json` 笔误）。
+
 ---
 
 ## [0.6.9] - 2026-07-26

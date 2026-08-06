@@ -1,6 +1,6 @@
 # Trellis Lite — 最佳实践指南
 
-> 基于 9 轮 oracle-reviewer 审查沉淀 + ~1704 行实现 + 151 个 unittest 覆盖的实战经验。
+> 基于 9 轮 oracle-reviewer 审查沉淀 + ~1756 行实现 + 156 个 unittest 覆盖的实战经验。
 >
 > 配套文档：
 > - [README.md](../README.md) — 快速上手
@@ -395,9 +395,9 @@ Note: replaced active task '08-04-login' with '08-04-new-feature'.
 
 Lite 的退出码遵循一条原则：**不可逆操作失败必须中止（return 1）；可恢复操作失败可以降级继续（return 0 + Warning）**。
 
-完整退出码表详见 [exit-codes.md](exit-codes.md)。以下是几个关键不对称设计：
+完整退出码表详见 [exit-codes.md](exit-codes.md)。以下是各 mutating 命令的副作用风险细节：
 
-### 7.1 task finish 严格 vs task start/archive/cancel 宽松
+### 7.1 mutating 命令对损坏元数据一律拒绝（对称严格模式）
 
 | 命令 | task.json 损坏时行为 | 返回码 | 原理 |
 |---|---|---|---|
@@ -415,7 +415,7 @@ Lite 的退出码遵循一条原则：**不可逆操作失败必须中止（retu
 set -e
 python3 trellis.py task finish || { echo "active task missing — abort"; exit 1; }
 
-# start 失败可降级：Warning 但继续（你可能只是手快重复了）
+# start 幂等：对已激活任务重复调用输出 Note + 返 0（安全无副作用）
 python3 trellis.py task start my-task   # 即使重复调用也安全
 ```
 

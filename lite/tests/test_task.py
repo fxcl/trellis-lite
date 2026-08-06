@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import unittest
 
 from ._helpers import Harness, find_task, task_dirs
@@ -108,6 +109,53 @@ class TestTaskLifecycle(unittest.TestCase):
         self.assertEqual(first_data["status"], "done",
                          f"planning old task must close to done, got "
                          f"{first_data['status']}")
+
+    def test_create_replace_tolerates_missing_old_task_dir(self) -> None:
+        """P3-5a (round 9): --replace with a stale .current-task pointer
+        (old dir deleted out from under it) must still succeed — the close
+        step is guarded by old_dir.is_dir() and skipped, no partial state."""
+        self.h.run(["task", "create", "First", "--slug", "first"])
+        for d in task_dirs(self.h.tmpdir):
+            if "first" in d.name:
+                shutil.rmtree(d)
+        r = self.h.run(["task", "create", "Second", "--slug", "second", "--replace"])
+        self.assertEqual(r.returncode, 0,
+                         f"--replace must tolerate a missing old task dir:\n{r.stdout}")
+        ct = self.h.tmpdir / ".trellis-lite/.current-task"
+        self.assertIn("second", ct.read_text())
+
+    def test_create_replace_leaves_terminal_old_task_untouched(self) -> None:
+        """P3-5a: --replace onto a cancelled old task — set_status(done) is
+        rejected by the forward-only machine and intentionally ignored, so
+        the terminal task stays untouched while create still succeeds."""
+        self.h.run(["task", "create", "First", "--slug", "first"])
+        self.h.run(["task", "cancel", "first"])  # cancel clears the pointer
+        first_dir = find_task(self.h.tmpdir, "first")
+        # Restore a stale pointer onto the cancelled task to exercise the
+        # takeover path (only reachable via hand-edited .current-task).
+        ct = self.h.tmpdir / ".trellis-lite/.current-task"
+        ct.write_text(f".trellis-lite/tasks/{first_dir.name}\n", encoding="utf-8")
+        r = self.h.run(["task", "create", "Second", "--slug", "second", "--replace"])
+        self.assertEqual(r.returncode, 0,
+                         f"--replace must succeed on a terminal old task:\n{r.stdout}")
+        first_data = json.loads((first_dir / "task.json").read_text())
+        self.assertEqual(first_data["status"], "cancelled",
+                         "terminal old task must stay untouched by --replace")
+
+    def test_create_replace_tolerates_corrupted_old_task(self) -> None:
+        """P3-5a: --replace when the old task's task.json is corrupted —
+        set_status returns False (strict read) and is intentionally ignored;
+        create succeeds and the corrupted file is left intact for doctor."""
+        self.h.run(["task", "create", "First", "--slug", "first"])
+        first_dir = find_task(self.h.tmpdir, "first")
+        (first_dir / "task.json").write_text("garbage", encoding="utf-8")
+        r = self.h.run(["task", "create", "Second", "--slug", "second", "--replace"])
+        self.assertEqual(r.returncode, 0,
+                         f"--replace must not crash on corrupted old task:\n{r.stdout}")
+        self.assertEqual((first_dir / "task.json").read_text(), "garbage",
+                         "corrupted old task.json must be left intact")
+        ct = self.h.tmpdir / ".trellis-lite/.current-task"
+        self.assertIn("second", ct.read_text())
 
     # ---- start ------------------------------------------------------------
 
@@ -242,6 +290,24 @@ class TestTaskLifecycle(unittest.TestCase):
         ct = self.h.tmpdir / ".trellis-lite/.current-task"
         self.assertTrue(ct.exists(), "finish on missing task.json must not clear active pointer")
 
+    def test_finish_reports_terminal_state_not_corrupted(self) -> None:
+        """P3-4 (round 9): finishing a task whose recorded status is already
+        terminal (only reachable via hand-edited .current-task) must report
+        the real cause — previously every set_status False was reported as
+        'missing or corrupted', sending users to doctor --fix for a problem
+        doctor cannot fix."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "cancel", "t"])  # cancel clears the pointer
+        d = find_task(self.h.tmpdir, "t")
+        ct = self.h.tmpdir / ".trellis-lite/.current-task"
+        ct.write_text(f".trellis-lite/tasks/{d.name}\n", encoding="utf-8")
+        r = self.h.run(["task", "finish"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("terminal state 'cancelled'", r.stdout)
+        self.assertNotIn("corrupted", r.stdout,
+                         "terminal-state refusal must not misreport as corrupted")
+        self.assertTrue(ct.exists(), "refusal must not clear the active pointer")
+
     # ---- archive ----------------------------------------------------------
 
     def test_archive_moves_to_archive_dir(self) -> None:
@@ -373,6 +439,12 @@ class TestTaskLifecycle(unittest.TestCase):
         r = self.h.run(["task", "delete", "t", "--force"])
         self.assertEqual(r.returncode, 0)
         self.assertIsNone(self._task_path("t"), "task dir should be gone after --force delete")
+        # P3-5b (round 9): the created task is the active one — force-delete
+        # must also clear .current-task (code path at _task_delete, asserted
+        # here so a future refactor can't silently drop the cleanup).
+        ct = self.h.tmpdir / ".trellis-lite/.current-task"
+        self.assertFalse(ct.exists(),
+                         "force-delete of the active task must clear .current-task")
 
     def test_delete_clears_active_pointer(self) -> None:
         self.h.run(["task", "create", "T", "--slug", "t"])
@@ -569,6 +641,10 @@ class TestTaskLifecycle(unittest.TestCase):
         self.assertIn("Task deleted", r.stdout)
         self.assertIsNone(self._task_path("t"),
                           "corrupted task dir must be gone after --force delete")
+        # P3-5b: same pointer-cleanup assertion on the corrupted path.
+        ct = self.h.tmpdir / ".trellis-lite/.current-task"
+        self.assertFalse(ct.exists(),
+                         "--force delete of corrupted active task must clear .current-task")
 
     def test_delete_rejects_corrupted_task_json(self) -> None:
         """F53: deleting a task with corrupted task.json must refuse cleanly.
