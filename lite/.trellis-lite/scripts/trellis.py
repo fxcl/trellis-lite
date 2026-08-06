@@ -1410,9 +1410,22 @@ def _check_developer_file(tdir: Path, fix: bool, problems: list[str], warnings: 
         problems.append(f"{FILE_DEVELOPER} missing")
         print(colored("  ✗", C_RED), f"{FILE_DEVELOPER} missing")
         if fix:
-            dev_file.write_text("name=developer\n", encoding="utf-8")
+            # Recover the developer name from the existing workspace when
+            # possible: if workspace/ has exactly one subdir, that subdir is
+            # the real identity and restoring it keeps the user's journals
+            # reachable (otherwise _check_workspace_dir would create a fresh
+            # workspace/developer/ and orphan the real one). Fall back to the
+            # generic "developer" default only when there's no single candidate.
+            recovered = "developer"
+            ws_root = tdir / DIR_WORKSPACE
+            if ws_root.is_dir():
+                subdirs = [p for p in ws_root.iterdir() if p.is_dir()]
+                if len(subdirs) == 1:
+                    recovered = subdirs[0].name
+            dev_file.write_text(f"name={recovered}\n", encoding="utf-8")
             problems.pop()
-            print(colored("    ↳", C_DIM), "wrote default developer=developer")
+            print(colored("    ↳", C_DIM),
+                  f"wrote default developer={recovered}")
         return
     dev = get_developer()
     if dev:

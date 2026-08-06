@@ -89,6 +89,54 @@ class TestDoctor(unittest.TestCase):
         summary_block = out[summary_idx:]
         self.assertNotIn("no journal files", summary_block)
 
+    def test_doctor_fix_recovers_developer_from_single_workspace(self) -> None:
+        """When .developer is missing but workspace/ has exactly one subdir,
+        --fix must restore that name — NOT fall back to "developer" — so the
+        user's existing journals stay reachable. Previously --fix wrote
+        name=developer unconditionally, orphaning workspace/<real-name>/ and
+        making `session`/`context` target a fresh empty workspace."""
+        dev_file = self.h.tmpdir / ".trellis-lite/.developer"
+        # tester/ is the real workspace (created by Harness). Wipe .developer
+        # so doctor sees it missing but workspace/tester/ still has journals.
+        dev_file.unlink()
+        r = self._run(["doctor", "--fix"])
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(dev_file.read_text().strip(), "name=tester",
+                         f"--fix must recover developer name from the single "
+                         f"workspace subdir, got:\n{dev_file.read_text()}")
+        # Subsequent doctor must be healthy with developer=tester (journals intact).
+        r2 = self._run(["doctor"])
+        self.assertEqual(r2.returncode, 0)
+        self.assertIn("Developer: tester", r2.stdout)
+
+    def test_doctor_fix_defaults_developer_when_workspace_empty_or_ambiguous(self) -> None:
+        """When .developer is missing AND workspace/ has zero or 2+ subdirs,
+        --fix falls back to the generic 'developer' default (no single name
+        to recover). Both branches must not crash and must write a valid file."""
+        for n_subdirs in (0, 2):
+            with self.subTest(n_subdirs=n_subdirs):
+                # Fresh harness per subcase so we control workspace/ contents.
+                h = Harness()
+                try:
+                    ws_root = h.tmpdir / ".trellis-lite/workspace"
+                    # Remove the harness-created tester/ so we start clean.
+                    shutil.rmtree(ws_root)
+                    ws_root.mkdir()
+                    if n_subdirs == 2:
+                        (ws_root / "alice").mkdir()
+                        (ws_root / "bob").mkdir()
+                    # n_subdirs == 0: leave workspace/ empty
+                    dev = h.tmpdir / ".trellis-lite/.developer"
+                    self.assertTrue(dev.is_file())  # harness ran init
+                    dev.unlink()
+                    r = h.run(["doctor", "--fix"])
+                    self.assertEqual(r.returncode, 0)
+                    self.assertEqual(dev.read_text().strip(), "name=developer",
+                                     f"expected fallback name=developer for "
+                                     f"{n_subdirs} subdirs, got:\n{dev.read_text()}")
+                finally:
+                    h.cleanup()
+
     def test_doctor_warns_on_internal_journal_gap(self) -> None:
         """F20: gap in journal numbering (e.g. 1, 3, 5) is a warning."""
         ws = self.h.tmpdir / ".trellis-lite/workspace/tester"
