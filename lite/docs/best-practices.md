@@ -1,6 +1,6 @@
 # Trellis Lite — 最佳实践指南
 
-> 基于 16 轮 oracle-reviewer 审查沉淀 + ~1878 行实现 + 165 个 unittest 覆盖的实战经验。
+> 基于 17 轮 oracle-reviewer 审查沉淀 + ~1879 行实现 + 165 个 unittest 覆盖的实战经验。
 >
 > 配套文档：
 > - [README.md](../README.md) — 快速上手
@@ -805,6 +805,11 @@ AI 路径：
 - **重装前先 `uninstall.sh .` + `install.sh . <name>`**（install 是幂等跳过，不是修复）
 - **mutating task 操作依赖返 1（`task finish` / `task start` / `task archive` / `task cancel` / `task delete` 在 corrupted `task.json` 时一致拒绝 + 副作用不执行，避免 split-brain）；可读操作总返 0（`task list` / `task current`）**
 - **遇到不可解释的 bug 先 `doctor [--fix]`，再看 `git log`**
+- **跨文件数字同步（README / design.md / usage-guide.md / best-practices.md / CHANGELOG.md 五处）**：代码变更后手动 grep + SearchReplace 同步行数/测试数；迭代 16+ 轮后这不是负担而是纪律
+- **mutating helper 走 `_safe_mkdir`（统一防御深度）**：任何 `mkdir(parents=True, exist_ok=True)` 调用都应考虑换代，除非是有意保留的两处（`rotate_if_full` 静默恢复 vs 用户可见错误，`_task_create` 显式重名 vs 静默覆盖同名数据）
+- **doctor 检查项用 idx 模式 pop**：`idx = len(list) - 1` 后 `list.pop(idx)`，防御未来插入新检查项时 pop 移除错误条目
+- **CHANGELOG `[Unreleased]` 锚点日期与标题日期一致**：GitHub markdown 锚点由标题生成，错位会导致跳转失效
+- **1700 行后主动审视单文件架构**：当前 1879 / 2000（94%，余量 121），到达 1900 前考虑抽出 helper 模块而非硬扩
 
 ### ❌ DON'T
 
@@ -818,6 +823,107 @@ AI 路径：
 - **不要期待 `install.sh` 重装会覆盖任何东西**（见第一节“重装语义”）
 - **不要手动改 task.json**（会被 `doctor` 报 Warning，且会绕开 set_status 守门）
 - **不要把 `task list` / `task current` 当 CI 闸门**（它们空状态返 0）
+- **不要为每轮审查都跑全量 165 测试——只跑受影响的模块**（例如修改 `_task_archive` 后只跑 `test_task`；修改 `_check_*` 后只跑 `test_doctor`）
+- **不要在没有跨调用者追踪前宣称“深度收敛”**：代码表面 0 P1 但 helper 边角不一致（如 raw mkdir 三处）会被下轮 oracle 抓出
+
+---
+
+## 十七、oracle-reviewer 实战经验沉淀（连续 8 轮 0 P1 达成）
+
+> 从第 10 轮起进入 **事件驱动审查**模式：仅在**新增功能 / 重构 / 接口变更 / 严重 bug 报告**时启动一轮 oracle-reviewer。第 17 轮首次在 5 个审计维度全部 0 发现（0 P1 / 0 P2 / 0 P3）。
+
+### 17.1 跨调用者追踪清单（5 个对称严格模式）
+
+跨调用者追踪是"深度收敛"的核心证据。审计者必须手工验证以下跨调用者契约：
+
+| 契约 | 验证点 | 最近加固轮次 |
+|---|---|---|
+| 5 个 mutating 命令 corrupted 预检 | L738 / L835 / L893 / L975 / L1110 一致 `read_json_strict` + exit 1 | 第 6-7 轮 |
+| 7 类状态机允许转移 | `ALLOWED_TRANSITIONS` 集中 + `set_status` 幂等 | 第 6 轮 F6 |
+| doctor 9 项检查 idx 模式 | 9 项全部 `idx = len(list) - 1` + `list.pop(idx)` | 第 15 轮 P3-1 |
+| `_safe_mkdir` 防御网深度 | 5 修复点 + `write_json`（含函数自身 + 全部调用点） | 第 16 轮 P3-A |
+| 三处 raw mkdir 有意保留 | `rotate_if_full` + `_task_create` + `_safe_mkdir` 内部 | 第 16 轮验证 |
+
+### 17.2 事件驱动审查原则
+
+**不全量扫，全事件驱动**。判别模式：
+
+| 场景 | 是否启动一轮审查 |
+|---|---|
+| 连续 3 轮 0 P1 | 可以进入事件驱动（不再定时启动） |
+| 新增 / 修改 mutating 命令 | 必后启一轮 |
+| 状态机变更（新增状态或转移） | 必后启一轮 |
+| `_safe_mkdir` 类边角加固 | 必后启一轮 |
+| 用户报告 traceback 类 bug | 必后启一轮 |
+| 文档数字同步 / 注释精度 | 跳过，用 AskUserQuestion 询问 |
+| 仅 typo / 注释措辞 | 同上 |
+| 仅 CHANGELOG 更新 | 同上 |
+
+### 17.3 数字同步纪律（5 处文档）
+
+任何代码变更（增删 / 修改）都需要同步 5 处文档：
+
+```bash
+# 1. 核实当前行数 / 测试数
+wc -l lite/.trellis-lite/scripts/trellis.py
+cd lite && python3 -m unittest tests.test_* 2>&1 | grep "Ran"
+
+# 2. grep 所有需要同步的位置
+grep -rn "~1878\|~1879\|165 个\|164 个\|163 个" lite/README.md lite/docs/
+
+# 3. 一次性 SearchReplace 同步全部位置
+```
+
+**为什么需要纪律**：第 12 轮 README L131 同步时漏改了测试数 163→164，靠第 13 轮 oracle 补抓。多次纪律同步后误差会缩小。
+
+### 17.4 防御深度统一模式
+
+`_safe_mkdir` 是 helper 抽象的典型案例。占位评判标准：
+
+| 评判问题 | 判定 |
+|---|---|
+| 是否封装了 pathlib 边缘（NotADirectoryError / FileExistsError）？ | 是 |
+| 是否有 ≥ 3 个调用点？ | 是（5 修复点 + `write_json`） |
+| 是否有跨调用者一致的恢复语义？ | 是（stray file + symlink-to-file + 祖辈链） |
+| 是否有特殊调用点需例外保留？ | 是（`rotate_if_full` + `_task_create`） |
+
+**经验**：发现一个边角问题后，问"应该还有多少个调用点走这个边角"——往往使一个补丁变成跨调用者面状加固。
+
+### 17.5 验证命令清单
+
+```bash
+# 跑全量 165 测试（CI / release 前）
+cd lite && python3 -m unittest tests.test_init tests.test_install tests.test_precommit \
+  tests.test_session tests.test_slugify_fuzz tests.test_task tests.test_doctor \
+  tests.test_context_specs_help tests.test_status_machine tests.test_usage_consistency
+
+# 局部验证（审查后）
+# 修改 _task_archive -> 只跑 test_task
+cd lite && python3 -m unittest tests.test_task -v
+
+# 修改 _check_* -> 只跑 test_doctor
+cd lite && python3 -m unittest tests.test_doctor -v
+
+# 验行数
+wc -l lite/.trellis-lite/scripts/trellis.py
+
+# 跨调用者审计中有用的 grep
+grep -n "read_json_strict\|read_json(" lite/.trellis-lite/scripts/trellis.py
+grep -n "_safe_mkdir\|mkdir(parents=True" lite/.trellis-lite/scripts/trellis.py
+grep -n "problems.pop\|warnings.pop" lite/.trellis-lite/scripts/trellis.py
+```
+
+### 17.6 收敛态判定标准
+
+| 阶段 | 判定标准 |
+|---|---|
+| 初始阶段 | 连续多轮非 0 P1，需主动修补 |
+| 进化阶段 | 连续 3-5 轮 0 P1，但 P2 仍偶尔出现 |
+| **收敛阶段** | 连续 5+ 轮 0 P1 + 连续 3+ 轮 0 P2，点状 P3（可跳过） |
+| **深度收敛** | 连续 8+ 轮 0 P1 + 连续 4+ 轮 0 P2 + 某轮 0 P3（全部 5 维度 0 发现） |
+| 合并 / 拆分阈值 | 1700 行后主动审视，1900 行前拆分出 helper 模块 |
+
+当前 trellis-lite 处于**深度收敛**阶段（连续 8 轮 0 P1 / 6 轮 0 P2 / 2 轮 0 P3）。
 
 ---
 
