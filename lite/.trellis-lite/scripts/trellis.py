@@ -1676,12 +1676,17 @@ def _check_current_task(tdir: Path, fix: bool, problems: list[str], warnings: li
     ct_path = tdir.parent / current
     if not ct_path.is_dir():
         problems.append(f".current-task points to missing dir: {current}")
+        # P3-1 (round 15): idx-based pop (same pattern as _check_developer_file
+        # / _check_required_subdirs / _check_workspace_dir / _check_archive)
+        # so future checks inserted between append and pop can't drop the
+        # wrong entry from the summary list.
+        idx = len(problems) - 1
         print(colored("  ✗", C_RED), f".current-task points to missing: {current}")
         if fix:
             clear_current_task()
             # After successful repair, drop the problem from the list so the
             # final summary doesn't report a fixed issue.
-            problems.pop()
+            problems.pop(idx)
             print(colored("    ↳", C_DIM), "cleared stale .current-task pointer")
         return
     # F55: read_json_strict so corrupted metadata surfaces as Problem.

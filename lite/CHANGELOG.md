@@ -216,6 +216,13 @@
 - **`_safe_mkdir` 注释精度化（P3-3）**：L251 注释从 “Must be a regular file” 改为 “A regular file or a symlink-to-file”，准确描述 `cur.exists()` 的匹配范围（symlink-to-file 也返回 True）。
 - 文档行数 1857 → 1859（注释扩展净增 2 行）。
 
+### 改进（第 15 轮 oracle-reviewer）
+
+第 15 轮审查 0 P1 / 0 P2 / 1 项 P3。连续 6 轮（10/11/12/13/14/15）0 P1，连续 4 轮（12/13/14/15）0 P2，代码核心契约跨调用者追踪全部成立，维护收敛态正式确认。
+
+- **`_check_current_task` 改 idx 模式（P3-1）**：L1684 裸 `problems.pop()` 改为 `idx = len(problems) - 1` + `problems.pop(idx)`，与 `_check_developer_file` / `_check_required_subdirs` / `_check_workspace_dir` / `_check_archive` / `_check_journal` / `_check_journal_numbering` / `_check_task_integrity` / `_check_precommit` 8 处约定一致。完成 doctor 9 项检查全量化。零功能影响（现存调用路径中间无其他 append），防未来插入新检查项时 pop 移除错误条目。
+- 文档行数 1859 → 1864（注释净增 5 行）。
+
 ---
 
 ## [0.6.9] - 2026-07-26
