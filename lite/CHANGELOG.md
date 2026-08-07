@@ -192,6 +192,21 @@
 - `tests/test_init.py` 新增 `test_recovers_from_file_in_init_path`（P3-2 锁回归）。
 - 测试总数 163 → **164**，全部通过；trellis.py 1824 → 1842 行；数字同步 README / design / usage-guide / best-practices。
 
+### 改进（第 13 轮 oracle-reviewer）
+
+第 13 轮审查 0 P1 / 0 P2 / 3 项 P3；本轮处理全 5 项（2 项 P2 文档同步 + 3 项 P3 优化）。连续 4 轮（10/11/12/13）0 P1，代码核心契约在跨调用者追踪中全部成立，无回归，进入维护收敛态。
+
+- **README 测试命令补全（P2-1）**：README L135-137 的测试命令遗漏了 `tests.test_status_machine` 和 `tests.test_usage_consistency` 两个模块（按文档操作会少跑 21% 测试），现已补齐与 design.md / usage-guide.md 一致；同时 L131 测试数 163 → 164。
+- **design.md 测试数同步（P2-2）**：L210 + L233 测试数 163 → 164（与 README / usage-guide / best-practices 对齐）。
+- **`_task_archive` 归档原子化（P3-1）**：之前首次月份归档时 `shutil.move` 因 `dest.parent`（月份目录）不存在而回退到 `copytree + rmtree` 非原子路径（崩溃窗口内任务可能同时存在于 `tasks/` 和 `archive/`）；现在 `_safe_mkdir(dest.parent)` 预建月份目录，`shutil.move` 始终走 `os.rename` 原子路径。祖先 walk 同时创建 archive 容器，原 `_safe_mkdir(archive_dir)` 被吸收。
+- **`_check_workspace_dir` pop 模式统一（P3-2）**：两处裸 `warnings.pop()` 改为 `idx = len(warnings) - 1` + `warnings.pop(idx)`，与 `_check_developer_file` / `_check_required_subdirs` 一致，防止未来插入新检查项时 pop 移除错误条目。
+- **`_safe_mkdir` docstring 精度（P3-3）**：措辞从 "non-`.trellis-lite` paths are never touched" 改为 "all callers operate under `.trellis-lite/`"，避免函数自身不具备的边界保证误导未来调用方。
+
+### 测试（第 13 轮 oracle-reviewer）
+
+- `tests/test_task.py` 新增 `test_archive_precreates_month_dir_for_atomic_move`（P3-1 锁回归）：in-process 拦截 `shutil.move`，断言 `dest.parent`（月份目录）在 move 调用前已存在，保证走原子 rename 路径。
+- 测试总数 164 → **165**，全部通过；trellis.py 1842 → 1857 行；数字同步 README / design / usage-guide / best-practices。
+
 ---
 
 ## [0.6.9] - 2026-07-26

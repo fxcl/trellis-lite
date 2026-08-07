@@ -232,7 +232,10 @@ def _safe_mkdir(p: Path) -> bool:
     create `.trellis-lite/tasks/archive` — without this, mkdir(parents=True)
     raises NotADirectoryError on the offending parent. The walk only
     unlinks files (never directories) and stops at the first existing dir
-    or when it reaches root, so non-`.trellis-lite` paths are never touched.
+    or when it reaches root. In practice all callers operate under
+    `.trellis-lite/`, so the walk terminates there; the function itself has
+    no `.trellis-lite/`-specific guard and must not be reused outside that
+    subtree without revisiting its scope.
 
     Use for all `mkdir(parents=True, exist_ok=True)` calls in repair paths.
     """
@@ -929,10 +932,17 @@ def _task_archive(args: list[str]) -> int:
         dest = archive_dir / month / f"{base_name}-{counter}"
         counter += 1
 
-    # P3-3 (round 11): _safe_mkdir transparently recovers from a stray file at
-    # the archive root path (Python 3.12+ would otherwise raise FileExistsError
-    # and surface a raw traceback). Mirrors the pattern used in doctor --fix.
-    _safe_mkdir(archive_dir)
+    # P3-3 (round 11) + P3-1 (round 13): _safe_mkdir transparently recovers
+    # from a stray file at the archive root (Python 3.12+ would otherwise
+    # raise FileExistsError and surface a raw traceback), mirroring doctor
+    # --fix. We mkdir dest.parent (= archive_dir / month) rather than just
+    # archive_dir so shutil.move always takes the atomic os.rename path:
+    # previously the first archive of a month fell back to copytree + rmtree,
+    # leaving a narrow window where the task existed in both tasks/ and
+    # archive/ if the process was killed mid-copy. The ancestor walk in
+    # _safe_mkdir also creates the archive root, so the previous explicit
+    # archive_dir mkdir is subsumed.
+    _safe_mkdir(dest.parent)
     shutil.move(str(task_dir), str(dest))
 
     # Clear current if it was this task (exact match on directory name)
@@ -1607,6 +1617,10 @@ def _check_workspace_dir(fix: bool, warnings: list[str]) -> Path | None:
         return None
     if not workspace.is_dir():
         warnings.append(f"workspace/{dev} missing")
+        # P3-2 (round 13): idx-based pop (same pattern as
+        # _check_developer_file / _check_required_subdirs) so doctor checks
+        # inserted between append and pop can't drop the wrong entry.
+        idx = len(warnings) - 1
         print(colored("  ⚠", C_YELLOW), f"workspace/{dev} missing")
         if fix:
             # _safe_mkdir unlinks a stray file at this workspace path so
@@ -1617,19 +1631,20 @@ def _check_workspace_dir(fix: bool, warnings: list[str]) -> Path | None:
             # the repair tool that F44's cmd_session error message points at.
             _safe_mkdir(workspace)
             print(colored("    ↳", C_DIM), f"created {workspace}")
-            warnings.pop()
+            warnings.pop(idx)
     # Check journal exists (only meaningful now that workspace may have been created)
     if workspace.is_dir():
         journals = list_journals(workspace)
         if not journals:
             warnings.append("no journal files")
+            idx = len(warnings) - 1
             print(colored("  ⚠", C_YELLOW), "no journal files")
             if fix:
                 # Single source of truth for journal creation: defer to
                 # rotate_if_full so header text/format stays consistent.
                 rotate_if_full(workspace, list_journals(workspace))
                 print(colored("    ↳", C_DIM), "created journal-1.md")
-                warnings.pop()
+                warnings.pop(idx)
         else:
             print(colored("  ✓", C_GREEN), f"workspace/{dev}/ has {len(journals)} journal(s)")
     return workspace

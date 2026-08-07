@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import shutil
 import unittest
+from pathlib import Path
 
 from ._helpers import Harness, find_task, task_dirs
+
+# In-process load of trellis.py for tests that need to monkeypatch internals
+# (e.g. intercepting shutil.move to assert the atomic-rename precondition).
+# Mirrors the pattern in test_status_machine.py.
+_SCRIPT = Path(__file__).resolve().parent.parent / ".trellis-lite/scripts/trellis.py"
+_spec = importlib.util.spec_from_file_location("trellis_script", _SCRIPT)
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 
 
 class TestTaskLifecycle(unittest.TestCase):
@@ -386,6 +397,61 @@ class TestTaskLifecycle(unittest.TestCase):
         self.assertTrue(archive.is_dir(), "archive file must be replaced by a directory")
         months = list(archive.iterdir())
         self.assertEqual(len(months), 1)
+
+    def test_archive_precreates_month_dir_for_atomic_move(self) -> None:
+        """P3-1 (round 13): `_task_archive` must mkdir dest.parent (the month
+        subdir) BEFORE calling shutil.move, so shutil.move always takes the
+        atomic os.rename path instead of falling back to copytree + rmtree
+        (which leaves a narrow window where the task exists in both tasks/
+        and archive/ if the process is killed mid-copy).
+
+        We probe this in-process by swapping trellis.shutil for a recorder
+        that captures whether dest.parent existed at the moment move() was
+        called. If a future change reverts to mkdir-ing only archive_dir,
+        the month dir won't exist at call time and this assertion fails."""
+        # Subprocess setup: create + finish a task (keeps setup realistic).
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        self.h.run(["task", "finish"])
+        slug = find_task(self.h.tmpdir, "t").name
+
+        # In-process probe: chdir to the project so get_repo_root resolves,
+        # then swap trellis.shutil for a recorder.
+        orig_cwd = Path.cwd()
+        orig_shutil = _mod.shutil
+
+        class _Recorder:
+            def __init__(self, real):
+                self._real = real
+                self.dest_parent_existed = None
+
+            def move(self, src, dest):
+                self.dest_parent_existed = Path(dest).parent.is_dir()
+                return self._real.move(str(src), str(dest))
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        recorder = _Recorder(orig_shutil)
+        try:
+            os.chdir(self.h.tmpdir)
+            _mod.shutil = recorder  # type: ignore[attr-defined]
+            rc = _mod._task_archive([slug])
+        finally:
+            _mod.shutil = orig_shutil  # type: ignore[attr-defined]
+            os.chdir(orig_cwd)
+
+        self.assertEqual(rc, 0, "_task_archive should succeed")
+        self.assertIsNotNone(
+            recorder.dest_parent_existed,
+            "shutil.move was never called — test setup is wrong",
+        )
+        self.assertTrue(
+            recorder.dest_parent_existed,
+            "P3-1 regression: dest.parent (month dir) did not exist when "
+            "shutil.move was called, so the move fell back to the non-atomic "
+            "copytree + rmtree path.",
+        )
 
     # ---- cancel -----------------------------------------------------------
 
