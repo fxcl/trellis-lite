@@ -1,6 +1,6 @@
 # Trellis Lite — 最佳实践指南
 
-> 基于 13 轮 oracle-reviewer 审查沉淀 + ~1857 行实现 + 165 个 unittest 覆盖的实战经验。
+> 基于 14 轮 oracle-reviewer 审查沉淀 + ~1859 行实现 + 165 个 unittest 覆盖的实战经验。
 >
 > 配套文档：
 > - [README.md](../README.md) — 快速上手
@@ -405,8 +405,9 @@ Lite 的退出码遵循一条原则：**不可逆操作失败必须中止（retu
 | `task start` | **拒绝、活跃指针不变** | 1 | 副作用：调 `set_current_task()` 切换指针。corrupted 后切换 → 后续 finish/cancel 看不到元数据（split-brain） |
 | `task archive` | **拒绝、不移动目录** | 1 | 副作用：`shutil.move` 到 `archive/YYYY-MM/`。corrupted 后移动 → orphan（task list 看到 `[?]`） |
 | `task cancel` | **拒绝、活跃指针不变** | 1 | 副作用：清理活跃指针。corrupted 后清理 → split-brain（指针已清但 task.json 不可读） |
+| `task delete` | **拒绝、不删除目录**（默认）；`--force` 旁路状态校验但**仍预检 corrupted** | 1 | 副作用：`shutil.rmtree` 永久删除目录。corrupted 后删除 → 不可读任务被误删不可逆 |
 
-**统一原则**：任何**会修改活跃指针或目录位置**的 mutating task 命令，遇到 `task.json` 缺失或损坏一律拒绝 + 返回 1，避免 split-brain。修复路径：`trellis.py doctor --fix`（推荐）/ `task delete --force <name>`（最后手段）。
+**统一原则**：任何**会修改活跃指针或目录位置**的 mutating task 命令（含 `delete`），遇到 `task.json` 缺失或损坏一律拒绝 + 返回 1，避免 split-brain。修复路径：`trellis.py doctor --fix`（推荐）/ `task delete --force <name>`（最后手段）。
 
 **使用示例**：
 
@@ -638,7 +639,7 @@ Active task: {trellis_current}
 
 **症状**：`task finish` 返回 1，活跃指针还在，状态没变 —— 你以为工具坏了。
 
-**修法**：**这正是设计意图**。`task finish` 在 task.json 损坏时会拒绝执行，因为它后续会调 `clear_current_task()` 清空活跃指针 —— 指针丢失不可逆。`task start` / `task archive` / `task cancel` **也**返 1（自第 6-7 轮 oracle-reviewer 后），理由同样：corrupted metadata + 副作用 = split-brain。详见第七节"退出码语义"。
+**修法**：**这正是设计意图**。`task finish` 在 task.json 损坏时会拒绝执行，因为它后续会调 `clear_current_task()` 清空活跃指针 —— 指针丢失不可逆。`task start` / `task archive` / `task cancel` / `task delete` **也**返 1（自第 6-7 轮 oracle-reviewer 后），理由同样：corrupted metadata + 副作用 = split-brain。详见第七节“退出码语义”。
 
 ### 坑 7：在散文中提到 “Trellis Lite runtime” → uninstall 误报清理
 
@@ -802,7 +803,7 @@ AI 路径：
 - PRD 用动词 + 数字 + 验收点
 - **状态机异常时跑 `doctor --fix`**（不手动改 task.json）
 - **重装前先 `uninstall.sh .` + `install.sh . <name>`**（install 是幂等跳过，不是修复）
-- **mutating task 操作依赖返 1（`task finish` / `task start` / `task archive` / `task cancel` 在 corrupted `task.json` 时一致拒绝 + 副作用不执行，避免 split-brain）；可读操作总返 0（`task list` / `task current`）**
+- **mutating task 操作依赖返 1（`task finish` / `task start` / `task archive` / `task cancel` / `task delete` 在 corrupted `task.json` 时一致拒绝 + 副作用不执行，避免 split-brain）；可读操作总返 0（`task list` / `task current`）**
 - **遇到不可解释的 bug 先 `doctor [--fix]`，再看 `git log`**
 
 ### ❌ DON'T

@@ -248,7 +248,9 @@ def _safe_mkdir(p: Path) -> bool:
         if cur.is_dir():
             break
         if cur.exists():
-            # Must be a regular file (not a dir, not a symlink to a dir).
+            # A regular file or a symlink-to-file (not a dir, not a
+            # symlink to a dir). unlink() removes the file or the symlink
+            # itself, either way clearing the path for mkdir.
             cur.unlink()
         cur = cur.parent
     if p.exists() and not p.is_dir():

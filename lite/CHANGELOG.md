@@ -207,6 +207,15 @@
 - `tests/test_task.py` 新增 `test_archive_precreates_month_dir_for_atomic_move`（P3-1 锁回归）：in-process 拦截 `shutil.move`，断言 `dest.parent`（月份目录）在 move 调用前已存在，保证走原子 rename 路径。
 - 测试总数 164 → **165**，全部通过；trellis.py 1842 → 1857 行；数字同步 README / design / usage-guide / best-practices。
 
+### 改进（第 14 轮 oracle-reviewer）
+
+第 14 轮审查 0 P1 / 0 P2 / 3 项 P3，全部为文档/注释层面，全 3 项处理。连续 5 轮（10/11/12/13/14）0 P1，连续 3 轮（12/13/14）0 P2，代码核心契约跨调用者追踪全部成立，确认进入维护收敛态。
+
+- **CHANGELOG 链接日期修正（P3-1）**：`[Unreleased]` 错误引用了 0.6.9 的发布日期（2026-07-26），实际标题日期为 2026-08-07；GitHub markdown 锚点无法匹配。
+- **对称拒绝 rationale 补全 `task delete`（P3-2）**：exit-codes.md §37 标题和正文从“四个命令”改为“五个命令”（含 `delete`），补 `delete` 副作用说明（`rmtree` 永久删除 + `--force` 仍预检 corrupted）；best-practices.md §7.1 表格补 `task delete` 行，§6.1 坘 6 和附录 DO 清单同步。
+- **`_safe_mkdir` 注释精度化（P3-3）**：L251 注释从 “Must be a regular file” 改为 “A regular file or a symlink-to-file”，准确描述 `cur.exists()` 的匹配范围（symlink-to-file 也返回 True）。
+- 文档行数 1857 → 1859（注释扩展净增 2 行）。
+
 ---
 
 ## [0.6.9] - 2026-07-26
@@ -294,6 +303,6 @@ git log <last-tag>..HEAD --pretty=format:"%s" | grep -E "^(feat|fix|docs|chore|t
 
 ---
 
-[Unreleased]: #unreleased---2026-07-26
+[Unreleased]: #unreleased---2026-08-07
 [0.6.9]: #069---2026-07-26
 [0.6.0]: #060---2026-07-12

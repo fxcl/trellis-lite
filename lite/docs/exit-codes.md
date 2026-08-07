@@ -34,13 +34,13 @@ POSIX 建议 1 = 一般错误，2 = 用法错误。但 Trellis Lite 的错误面
 
 这是用户**主动请求修改状态**，但当前状态不允许。区别于 `task list` 这种**被动查询**。
 
-### 为什么所有 mutating task 操作（`task finish` / `start` / `archive` / `cancel`）在 `task.json` 损坏时一致返回 1？
+### 为什么所有 mutating task 操作（`task finish` / `start` / `archive` / `cancel` / `delete`）在 `task.json` 损坏时一致返回 1？
 
 这是**对称设计**，基于 **split-brain 风险**：
 
-- 四个命令都会修改**活跃指针**或**目录位置**：`finish` 清空指针、`start` 切换指针、`cancel` 清空指针、`archive` 把目录挪到 `archive/YYYY-MM/`。
-- 若 `task.json` 损坏却继续执行副作用，后续 `task list` / `task finish` / `task cancel` 看到的将是"目录在 X 但 status 不可读"或"指针指向损坏任务"——元数据信任链断，下一步无法判断。
-- 因此这四个命令统一用 `read_json_strict` 预检 `task.json`（`finish` 自第 9 轮 P3-4 后也显式预检，与 `start`/`archive`/`cancel` 对称）：返回 `None`（缺失或损坏）即**中止 + 返回 1**，副作用完全不执行。
+- 五个命令都会修改**活跃指针**或**目录位置**：`finish` 清空指针、`start` 切换指针、`cancel` 清空指针、`archive` 把目录挪到 `archive/YYYY-MM/`、`delete` 永久删除目录（默认状态校验后；`--force` 可旁路状态校验但仍预检 corrupted 以防误删不可读任务）。
+- 若 `task.json` 损坏却继续执行副作用，后续 `task list` / `task finish` / `task cancel` 看到的将是“目录在 X 但 status 不可读”或“指针指向损坏任务”——元数据信任链断，下一步无法判断。
+- 因此这五个命令统一用 `read_json_strict` 预检 `task.json`（`finish` 自第 9 轮 P3-4 后也显式预检，与 `start`/`archive`/`cancel`/`delete` 对称）：返回 `None`（缺失或损坏）即**中止 + 返回 1**，副作用完全不执行。
 
 **恢复路径**（任选其一）：
 
