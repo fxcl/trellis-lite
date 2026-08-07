@@ -223,6 +223,14 @@
 - **`_check_current_task` 改 idx 模式（P3-1）**：L1684 裸 `problems.pop()` 改为 `idx = len(problems) - 1` + `problems.pop(idx)`，与 `_check_developer_file` / `_check_required_subdirs` / `_check_workspace_dir` / `_check_archive` / `_check_journal` / `_check_journal_numbering` / `_check_task_integrity` / `_check_precommit` 8 处约定一致。完成 doctor 9 项检查全量化。零功能影响（现存调用路径中间无其他 append），防未来插入新检查项时 pop 移除错误条目。
 - 文档行数 1859 → 1864（注释净增 5 行）。
 
+### 改进（第 16 轮 oracle-reviewer）
+
+第 16 轮审查 0 P1 / 0 P2 / 2 项 P3。连续 7 轮（10/11/12/13/14/15/16）0 P1，连续 5 轮（12/13/14/15/16）0 P2。第 13/14/15 轮历史修复全部回归干净，项目进入深度维护收敛态。
+
+- **`write_json` 走向 `_safe_mkdir`（P3-A）**：L209-218 内部 `path.parent.mkdir(parents=True, exist_ok=True)` 改为 `_safe_mkdir(path.parent)`，防御深度统一。现存调用点（task.json / .current-task / .developer 写入）均能传递良好父目录，但该改动为未来调用点提供隐式保障。
+- **`_safe_mkdir` 根路径边界补注释（P3-B）**：L247-252 补 "Root walk bound" 段，说明 `while cur != cur.parent` 循环在文件系统根自然终止、`p` 本身为 file 仍被处理、函数从不触碰目录（仅 unlink 文件）。消除 "`cur != cur.parent` 为何不是 `True`无限循环" 谜圈。
+- 文档行数 1864 → 1878（注释净增 14 行）。
+
 ---
 
 ## [0.6.9] - 2026-07-26

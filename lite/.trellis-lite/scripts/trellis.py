@@ -207,7 +207,14 @@ def read_json_strict(path: Path) -> dict | None:
 
 
 def write_json(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # P3-A (round 16): use _safe_mkdir so a stray file at path.parent (or any
+    # ancestor) is transparently recovered, matching the philosophy used by
+    # cmd_init / _task_archive / doctor --fix. Plain mkdir(parents=True,
+    # exist_ok=True) would raise NotADirectoryError on Python 3.12+ in a
+    # half-initialised state where a parent path is a file. Existing callers
+    # (task.json write, .current-task write, .developer write) all pass
+    # well-formed parent directories, so this is a defensive depth change.
+    _safe_mkdir(path.parent)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
@@ -236,6 +243,13 @@ def _safe_mkdir(p: Path) -> bool:
     `.trellis-lite/`, so the walk terminates there; the function itself has
     no `.trellis-lite/`-specific guard and must not be reused outside that
     subtree without revisiting its scope.
+
+    Root walk bound: the `while cur != cur.parent` loop terminates at the
+    filesystem root (`cur == cur.parent`). If p itself is a file at that
+    point, the post-loop `if p.exists() and not p.is_dir(): p.unlink()`
+    handles it before `p.mkdir(parents=True)` reconstructs the leaf. This
+    function never touches a directory (only unlinks files), so the root is
+    a safe termination sentinel even if many ancestors are stray files.
 
     Use for all `mkdir(parents=True, exist_ok=True)` calls in repair paths.
     """
