@@ -12,7 +12,7 @@ Trellis Lite 保留核心价值，砍掉所有非必要复杂度：
 
 | 原版 Trellis | Trellis Lite |
 |---|---|
-| 20+ Python 脚本 | **1 个**单文件脚本（~1750 行） |
+| 20+ Python 脚本 | **1 个**单文件脚本（~1810 行） |
 | 4 阶段工作流 | **3 阶段**（PLAN → CODE → WRAP） |
 | 20+ 平台适配 | **4 个**（Qoder、Claude Code、OpenCode、Cline）+ AGENTS.md 通用入口 |
 | Channel 多 agent 协作 | 移除 |
@@ -128,7 +128,7 @@ PLAN ────────────────► CODE ──────
 
 ## 运行测试
 
-Trellis Lite 自带 156 个 unittest 覆盖全部命令（init / task / session / context / specs / install / doctor / pre-commit hook / status machine / usage consistency）。零依赖、仅需 Python 3.9+（install/uninstall 脚本需 bash 4+）。
+Trellis Lite 自带 161 个 unittest 覆盖全部命令（init / task / session / context / specs / install / doctor / pre-commit hook / status machine / usage consistency）。零依赖、仅需 Python 3.9+（install/uninstall 脚本需 bash 4+）。
 
 ```bash
 # 从仓库根运行（注意：Python 3.9+ 需要 `tests.` 包前缀，相对 import 才能工作）

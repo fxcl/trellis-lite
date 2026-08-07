@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import tempfile
 import unittest
@@ -131,6 +132,29 @@ class TestHelp(unittest.TestCase):
     def test_help_lists_commands(self) -> None:
         r = self.h.run(["help"])
         self.assertEqual(r.returncode, 0)
-        for cmd in ("init", "task create", "task start", "task finish",
-                    "task archive", "task cancel", "session", "context", "specs"):
+        # P3-E (round 10): enumeration completed — previously missing
+        # task current / task list / task delete / doctor / help / version.
+        for cmd in ("init", "task create", "task start", "task current",
+                    "task finish", "task archive", "task cancel",
+                    "task list", "task delete", "session", "context",
+                    "specs", "doctor", "help", "version"):
             self.assertIn(cmd, r.stdout, f"help missing command: {cmd}")
+
+    def test_help_description_column_aligned(self) -> None:
+        """P3-E (round 10): every command row's description must start at
+        the same visual column. Previously rows drifted 31–39 with no test
+        guard. Strip ANSI escapes first so colored() output doesn't skew
+        the measurement."""
+        r = self.h.run(["help"])
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", r.stdout)
+        cols: set[int] = set()
+        for line in plain.splitlines():
+            # Command rows: 2-space indent, signature, ≥2-space gap, desc.
+            m = re.match(r"^  (\S.*?)(\s{2,})(\S.*)$", line)
+            if m:
+                # Description start column = signature + gap widths; both
+                # vary per row but their sum must be the fixed column.
+                cols.add(len(m.group(1)) + len(m.group(2)))
+        self.assertTrue(cols, "no command rows matched — help layout changed?")
+        self.assertEqual(len(cols), 1,
+                         f"description column drifted across rows: {sorted(cols)}")

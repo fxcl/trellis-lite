@@ -817,16 +817,23 @@ def _task_finish(args: list[str]) -> int:
         print(colored(
             f"Error: cannot finish a task in terminal state '{status}'. "
             f"The .current-task pointer likely needs manual cleanup — "
-            f"run 'trellis.py doctor' to inspect.",
+            f"run 'trellis.py doctor' to inspect (it flags terminal-state "
+            f"pointers), or 'task create --replace' to take over.",
             C_RED,
         ))
         return 1
+    if status == "done":
+        # P3-F (round 10): finish on an already-done task is the crash-window
+        # recovery path (set_status succeeded, clear_current_task didn't run).
+        # Mirror task start's Note style so the second finish doesn't look
+        # like it did fresh work.
+        print(colored(f"Note: '{current}' is already done — clearing the active pointer.", C_DIM))
     if not set_status(task_dir, "done", when="finished"):
         # Reachable only when the file passed the pre-check but became
         # unwritable mid-operation; refuse without clearing the pointer.
         print(colored(
             f"Error: failed to update '{current}/task.json'; refusing to "
-            f"clear the active pointer.",
+            f"clear the active pointer. Check file permissions and try again.",
             C_RED,
         ))
         return 1
@@ -948,6 +955,13 @@ def _task_cancel(args: list[str]) -> int:
     if cur_status == "cancelled":
         # Idempotent: already cancelled, no-op success. Don't print the
         # warning that would suggest something went wrong.
+        # P3-A (round 10): also clear the active pointer if it still points
+        # here — the non-idempotent path below does this, and skipping it
+        # left users with a pointer onto a cancelled task whose only exit
+        # was hand-editing .current-task (doctor now warns about this state).
+        current = get_current_task()
+        if current and Path(current).name == task_dir.name:
+            clear_current_task()
         print(colored(f"Note: '{task_dir.name}' is already cancelled.", C_DIM))
         return 0
     # Forward transition (planning/in_progress → cancelled) plus the
@@ -1334,27 +1348,45 @@ SPEC_TEMPLATE = load_spec_template()
 # Main entry
 # ============================================================================
 
+# P3-E (round 10): help rows render through _help_line so the description
+# column is a single fixed width (was drifting 31–39 across rows). The test
+# suite locks this via an ANSI-stripped column-alignment assertion.
+_HELP_DESC_COL = 36  # longest signature (session) is 33; keep ≥3-space gap
+
+
+def _help_line(cmd: str, sig: str, desc: str) -> None:
+    """Render one help row with the description aligned at _HELP_DESC_COL.
+
+    Padding is computed from the uncolored signature so the ANSI escapes
+    injected by colored() don't shift the visual alignment. The whole left
+    side is colored as ONE span — coloring only the command name would
+    leave an escape sequence between name and signature, which splits the
+    visual double-space boundary and defeats the column-alignment test.
+    """
+    left = f"{cmd} {sig}" if sig else cmd
+    pad = max(1, _HELP_DESC_COL - len(left))
+    print(f"  {colored(left, C_GREEN)}" + " " * pad + desc)
+
+
 def print_help() -> None:
     print(colored("Trellis Lite", C_CYAN))
     print(colored(f"v{__version__} — Single-file task & session manager for agile solo developers.\n", C_DIM))
     print("Commands:")
-    print(f"  {colored('init', C_GREEN)} <name>                    Initialize developer identity")
-    print(f"  {colored('task create', C_GREEN)} \"<title>\" [--slug <s>] [--replace]")
-    print(f"  {'':>34}--replace: take over from the active task (closes it)")
-    print(f"  {colored('task start', C_GREEN)} <name>               Activate a task (status → in_progress)")
-    print(f"  {colored('task current', C_GREEN)}                   Show active task")
-    print(f"  {colored('task finish', C_GREEN)}                    Deactivate current task")
-    print(f"  {colored('task archive', C_GREEN)} <name>            Archive a completed task")
-    print(f"  {colored('task cancel', C_GREEN)} <name>            Cancel an abandoned task (keeps directory)")
-    print(f"  {colored('task list', C_GREEN)} [--all]                   List tasks (--all includes archive)")
-    print(f"  {colored('task delete', C_GREEN)} <name> [--force]         Delete a cancelled task permanently")
-    print(f"  {'':>34}--force: skip status/corrupted checks (last resort)")
-    print(f"  {colored('session', C_GREEN)} --title \"T\" --summary \"S\"  Record a session journal entry")
-    print(f"  {colored('context', C_GREEN)}                       Print full session context")
-    print(f"  {colored('specs', C_GREEN)}                         List available spec files")
-    print(f"  {colored('doctor', C_GREEN)} [--fix]               Diagnose project state; --fix to repair")
-    print(f"  {colored('help', C_GREEN)}                          Show this help")
-    print(f"  {colored('version', C_GREEN)}                       Print version and exit")
+    _help_line("init", "<name>", "Initialize developer identity")
+    _help_line("task create", '"<title>"', "Create a new task (--slug <s>, --replace to take over)")
+    _help_line("task start", "<name>", "Activate a task (status → in_progress)")
+    _help_line("task current", "", "Show active task")
+    _help_line("task finish", "", "Deactivate current task")
+    _help_line("task archive", "<name>", "Archive a completed task")
+    _help_line("task cancel", "<name>", "Cancel an abandoned task (keeps directory)")
+    _help_line("task list", "[--all]", "List tasks (--all includes archive)")
+    _help_line("task delete", "<name>", "Delete a cancelled task (--force: last resort)")
+    _help_line("session", '--title "T" --summary "S"', "Record a session journal entry")
+    _help_line("context", "", "Print full session context")
+    _help_line("specs", "", "List available spec files")
+    _help_line("doctor", "[--fix]", "Diagnose project state; --fix to repair")
+    _help_line("help", "", "Show this help")
+    _help_line("version", "", "Print version and exit")
     print(f"\nWorkflow: {colored('init', C_DIM)} → {colored('task create', C_DIM)} → {colored('task start', C_DIM)} → code → {colored('task archive', C_DIM)} → {colored('session', C_DIM)}")
 
 
@@ -1400,7 +1432,7 @@ def cmd_doctor(args: list[str]) -> int:
     workspace = _check_workspace_dir(fix, warnings)
 
     # 5. .current-task pointer
-    _check_current_task(tdir, fix, problems)
+    _check_current_task(tdir, fix, problems, warnings)
 
     # 6. Task integrity
     _check_task_integrity(tdir, problems)
@@ -1463,10 +1495,14 @@ def _warn_orphaned_workspaces(tdir: Path, recovered: str, warnings: list[str]) -
             f"workspace subdirs unreachable with developer='{recovered}': "
             f"{', '.join(orphaned)}"
         )
+        # P3-D (round 10): symmetric per-dir path rendering (the previous
+        # `', workspace/'.join` only gave the last dir a trailing slash)
+        # plus guidance on which name to pick when switching.
+        listed = ", ".join(f"workspace/{o}/" for o in orphaned)
         print(colored("  ⚠", C_YELLOW),
-              f"workspace/{', workspace/'.join(orphaned)}/ journals are "
-              f"unreachable with developer='{recovered}' — run "
-              f"'init <name>' to switch identity.")
+              f"{listed} journals are unreachable with "
+              f"developer='{recovered}' — run 'init <name>' to switch "
+              f"identity (pick the name whose journals you want to keep).")
 
 
 def _check_developer_file(tdir: Path, fix: bool, problems: list[str], warnings: list[str]) -> None:
@@ -1474,11 +1510,15 @@ def _check_developer_file(tdir: Path, fix: bool, problems: list[str], warnings: 
     dev_file = tdir / FILE_DEVELOPER
     if not dev_file.is_file():
         problems.append(f"{FILE_DEVELOPER} missing")
+        # P3-C (round 10): idx-based pop (same pattern as
+        # _check_required_subdirs) so reordering/adding doctor checks can't
+        # make pop() drop the wrong entry from the summary list.
+        idx = len(problems) - 1
         print(colored("  ✗", C_RED), f"{FILE_DEVELOPER} missing")
         if fix:
             recovered = _recover_developer_name(tdir)
             dev_file.write_text(f"name={recovered}\n", encoding="utf-8")
-            problems.pop()
+            problems.pop(idx)
             print(colored("    ↳", C_DIM),
                   f"wrote default developer={recovered}")
             _warn_orphaned_workspaces(tdir, recovered, warnings)
@@ -1488,6 +1528,7 @@ def _check_developer_file(tdir: Path, fix: bool, problems: list[str], warnings: 
         print(colored("  ✓", C_GREEN), f"Developer: {dev}")
     else:
         warnings.append(f"{FILE_DEVELOPER} exists but has no name= line")
+        idx = len(warnings) - 1
         print(colored("  ⚠", C_YELLOW), f"{FILE_DEVELOPER} has no name= line")
         if fix:
             # P2-1 (round 9): `session` points users at `doctor --fix` when
@@ -1499,7 +1540,7 @@ def _check_developer_file(tdir: Path, fix: bool, problems: list[str], warnings: 
             # subdir, or the generic default.
             recovered = _recover_developer_name(tdir)
             dev_file.write_text(f"name={recovered}\n", encoding="utf-8")
-            warnings.pop()
+            warnings.pop(idx)
             print(colored("    ↳", C_DIM),
                   f"restored developer name={recovered}")
             _warn_orphaned_workspaces(tdir, recovered, warnings)
@@ -1566,7 +1607,7 @@ def _check_workspace_dir(fix: bool, warnings: list[str]) -> Path | None:
     return workspace
 
 
-def _check_current_task(tdir: Path, fix: bool, problems: list[str]) -> None:
+def _check_current_task(tdir: Path, fix: bool, problems: list[str], warnings: list[str]) -> None:
     """Check #5: .current-task pointer must resolve to a real task dir.
 
     F55: also flag corrupted task.json (was previously `✓ Active task: <name>
@@ -1576,6 +1617,12 @@ def _check_current_task(tdir: Path, fix: bool, problems: list[str]) -> None:
     auto-clear the pointer in --fix mode here because the right path is
     either manual repair or explicit `task delete --force <name>` — the
     user should consciously decide which.
+
+    P3-A (round 10): a pointer onto a terminal-state task (cancelled /
+    archived, only reachable by hand-editing) used to render as a green
+    `✓` even though `task finish` refuses it — closing the guidance loop
+    started by P3-4's refusal message now requires surfacing it as a
+    Warning with the same recovery options.
     """
     current = get_current_task()
     if not current:
@@ -1613,6 +1660,17 @@ def _check_current_task(tdir: Path, fix: bool, problems: list[str]) -> None:
               f"--force {ct_path.name}' or repair task.json manually.")
         return
     status = data.get("status", "?")
+    if status in ("archived", "cancelled"):
+        warnings.append(
+            f".current-task points to terminal-state task "
+            f"({status}): {ct_path.name}"
+        )
+        print(colored("  ⚠", C_YELLOW),
+              f"Active task '{ct_path.name}' is in terminal state "
+              f"'{status}' — `task finish` will refuse it. Re-point with "
+              f"'task create --replace', 'task start <other>', or delete "
+              f".current-task manually.")
+        return
     print(colored("  ✓", C_GREEN), f"Active task: {ct_path.name} ({status})")
 
 

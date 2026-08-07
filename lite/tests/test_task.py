@@ -308,6 +308,25 @@ class TestTaskLifecycle(unittest.TestCase):
                          "terminal-state refusal must not misreport as corrupted")
         self.assertTrue(ct.exists(), "refusal must not clear the active pointer")
 
+    def test_finish_reports_archived_terminal_state(self) -> None:
+        """P3-H (round 10): the archived branch of the finish terminal-state
+        guard. A genuinely archived task's dir lives under archive/, so this
+        state needs a hand-crafted status=archived task.json under tasks/ —
+        exactly the hand-edited-pointer scenario P3-4 targets."""
+        tasks_dir = self.h.tmpdir / ".trellis-lite/tasks"
+        fake = tasks_dir / "01-01-ghost"
+        fake.mkdir()
+        (fake / "task.json").write_text(
+            '{"title": "G", "slug": "ghost", "status": "archived"}',
+            encoding="utf-8",
+        )
+        ct = self.h.tmpdir / ".trellis-lite/.current-task"
+        ct.write_text(f".trellis-lite/tasks/{fake.name}\n", encoding="utf-8")
+        r = self.h.run(["task", "finish"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("terminal state 'archived'", r.stdout)
+        self.assertTrue(ct.exists(), "refusal must not clear the active pointer")
+
     # ---- archive ----------------------------------------------------------
 
     def test_archive_moves_to_archive_dir(self) -> None:
@@ -404,6 +423,22 @@ class TestTaskLifecycle(unittest.TestCase):
     def test_list_empty(self) -> None:
         r = self.h.run(["task", "list"])
         self.assertIn("No active tasks", r.stdout)
+
+    def test_cancel_idempotent_clears_stale_pointer(self) -> None:
+        """P3-A (round 10): the idempotent cancel branch must clear
+        .current-task when it still points at the already-cancelled task —
+        previously it early-returned before the pointer-cleanup code,
+        trapping users with a pointer whose only exit was hand-editing."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "cancel", "t"])  # normal path clears the pointer
+        d = find_task(self.h.tmpdir, "t")
+        ct = self.h.tmpdir / ".trellis-lite/.current-task"
+        ct.write_text(f".trellis-lite/tasks/{d.name}\n", encoding="utf-8")
+        r = self.h.run(["task", "cancel", "t"])  # idempotent branch
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("already cancelled", r.stdout)
+        self.assertFalse(ct.exists(),
+                         "idempotent cancel must clear a pointer onto the same task")
 
     # ---- delete -----------------------------------------------------------
 

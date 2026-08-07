@@ -181,6 +181,25 @@ class TestDoctor(unittest.TestCase):
         self.assertIn("unreachable", r.stdout)
         self.assertIn("alice", r.stdout)
         self.assertIn("tester", r.stdout)
+        # P3-B (round 10): strong assertion — the summary warning entry
+        # lists both orphaned dirs comma-joined (inline ⚠ renders them as
+        # separate workspace/<x>/ paths, so only the summary matches).
+        self.assertIn("alice, tester", r.stdout)
+
+    def test_doctor_no_orphan_warning_without_fix(self) -> None:
+        """P3-B (round 10) negative guard: the orphan-workspace warning is
+        a --fix-only side-effect report (the orphaning only happens when
+        --fix writes the fallback name). Plain doctor on the same broken
+        state must NOT emit it — otherwise users would see warnings about
+        a mutation that never happened."""
+        dev_file = self.h.tmpdir / ".trellis-lite/.developer"
+        dev_file.unlink()
+        ws_root = self.h.tmpdir / ".trellis-lite/workspace"
+        (ws_root / "alice").mkdir(exist_ok=True)
+        r = self._run(["doctor"])
+        self.assertEqual(r.returncode, 1)  # missing .developer is a Problem
+        self.assertNotIn("unreachable", r.stdout,
+                         "orphan warning leaked into non---fix mode")
 
     def test_doctor_fix_defaults_name_line_when_workspace_ambiguous(self) -> None:
         """P2-1 fallback: .developer half-written AND workspace/ has 2+
@@ -204,6 +223,26 @@ class TestDoctor(unittest.TestCase):
         r = self._run(["doctor"])
         self.assertIn("journal numbering gap", r.stdout)
         self.assertIn("1 → 3", r.stdout)
+
+    def test_doctor_warns_on_terminal_state_active_pointer(self) -> None:
+        """P3-A (round 10): .current-task pointing at a cancelled/archived
+        task used to render as green ✓ even though `task finish` refuses it
+        (P3-4). doctor must surface the state as a warning so the guidance
+        chain from the finish refusal message actually lands somewhere.
+        Warning-level: recoverable via --replace / manual pointer edit."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "cancel", "t"])  # cancel clears the pointer
+        task_dir = next(d for d in (self.h.tmpdir / ".trellis-lite/tasks").iterdir()
+                        if d.is_dir() and d.name != "archive")
+        # Restore a stale pointer onto the cancelled task.
+        ct = self.h.tmpdir / ".trellis-lite/.current-task"
+        ct.write_text(f".trellis-lite/tasks/{task_dir.name}\n", encoding="utf-8")
+        r = self._run(["doctor"])
+        self.assertEqual(r.returncode, 0, "terminal pointer is a warning, not a problem")
+        self.assertIn("terminal state", r.stdout)
+        self.assertIn("'cancelled'", r.stdout)
+        self.assertNotIn("✓ Active task", r.stdout,
+                         "terminal-state pointer must not render as a green check")
 
     def test_doctor_errors_on_stale_current_pointer(self) -> None:
         # Create a task, then delete its directory out from under .current-task

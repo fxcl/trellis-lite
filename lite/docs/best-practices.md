@@ -1,6 +1,6 @@
 # Trellis Lite — 最佳实践指南
 
-> 基于 9 轮 oracle-reviewer 审查沉淀 + ~1756 行实现 + 156 个 unittest 覆盖的实战经验。
+> 基于 10 轮 oracle-reviewer 审查沉淀 + ~1814 行实现 + 161 个 unittest 覆盖的实战经验。
 >
 > 配套文档：
 > - [README.md](../README.md) — 快速上手
@@ -347,7 +347,7 @@ python3 trellis.py task start my-task     # 幂等：返回 True，不重写 sta
 | `archived` | `task archive` | 仅 `archived` 任务上有 |
 | `cancelled` | `task cancel` | 仅 `cancelled` 任务上有 |
 
-> 判断“task.json 是否被人手动改过”的最快方法：看 `started` 是否在 `planning` 上存在。如果有，则可能被人工改了 —— `doctor` 会报 Warning。
+> 判断“task.json 是否被人手动改过”的最快方法：看 `started` 是否在 `planning` 上存在。如果有，则可能被人工改了 —— 需人工判断（doctor 目前不检查时间戳合法性，P3-G 第 10 轮修正此承诺）。
 
 ### 6.4 One Task at a Time
 
@@ -358,7 +358,7 @@ python3 trellis.py task start my-task     # 幂等：返回 True，不重写 sta
 $ python3 trellis.py task create "新功能"
 Refusing to create: '08-04-login' is still the active task. Run 'task finish' or 'task cancel' first, or pass --replace to take over.
 
-# 显式接管：
+# 显式接管（旧任务自动置为 done，含 finished 时间戳，F49）：
 $ python3 trellis.py task create "新功能" --replace
 Note: replaced active task '08-04-login' with '08-04-new-feature'.
 ```
@@ -445,7 +445,7 @@ fi
 2. .developer 文件存在且含 name=... 行（两种损坏形态：文件缺失 → Problem；无 name= 行 → Warning，--fix 均可恢复）
 3. tasks/, tasks/archive/, spec/ 三个子目录都存在
 4. workspace/<dev>/ 存在 + 至少 1 个 journal-N.md
-5. .current-task 指针指向的目录存在，且其 task.json 可读（F55：corrupted 报 Problem ✗，驱动 exit 1）
+5. .current-task 指针指向的目录存在，且其 task.json 可读（F55：corrupted 报 Problem ✗，驱动 exit 1；第 10 轮 P3-A：指向终态任务报 Warning ⚠）
 6. tasks/*/ 与 tasks/archive/<月>/*/ 下的 task.json 都不丢失、不损坏（F54：递归 archive + strict 读）
 7. journal 编号从 1 开始且无 gap
 8. Python ≥ 3.9

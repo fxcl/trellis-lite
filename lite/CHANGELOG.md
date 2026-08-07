@@ -9,7 +9,7 @@
 
 ---
 
-## [Unreleased] - 2026-08-06
+## [Unreleased] - 2026-08-07
 
 ### ⚠ 破坏性变更
 - **`task create` 已有活跃任务时拒绝（返回 1）**：之前是"警告 + 继续并替换活跃指针"，用户容易"丢了任务"。新行为遵循"one task at a time"硬规则 —
@@ -145,6 +145,23 @@
 - `--force` 删除两处补 `.current-task` 清理断言（P3-5b，防未来 refactor 静默丢指针清理）。
 - finish 终态分层报错测试（P3-4）+ orphan workspace 警告测试（P3-5c）。
 - 测试总数 151 → **156**，全部通过；trellis.py 1704 → 1756 行；数字同步 README / design / usage-guide / best-practices（P3-3 同时修正 §7.1 标题与示例的“非对称”残留表述、exit-codes.md 的 `pre-task.json` 笔误）。
+
+### 改进（第 10 轮 oracle-reviewer）
+
+第 10 轮审查 0 P1 / 0 P2，8 项 P3 全部处理；审查宣告收敛（后续改为事件驱动：新功能时再审）。
+
+- **doctor 报告终态指针（P3-A）**：`.current-task` 指向 cancelled/archived 任务时不再显示绿色 `✓`，改为 Warning ⚠ + 恢复选项（`--replace` / `task start <other>` / 手删指针），闭合 `task finish` 拒绝消息的指引链；`task cancel` 幂等分支同时补清指向自身的指针（之前早退在清指针代码之前，用户被困在只能手改指针的状态）。
+- **orphan 警告护栏（P3-B）**：新增负向测试（非 `--fix` 模式不泄漏 orphan 警告）；正测试加强为断言 summary 条目含逗号拼接的目录列表。
+- **doctor 检查项 pop 健壮化（P3-C）**：`_check_developer_file` 两处 `pop()` 改为 idx 定位（与 `_check_required_subdirs` 同模式），未来检查项重排/新增不会 pop 错条目。
+- **orphan 文案修正（P3-D）**：多目录时每个目录对称渲染 `workspace/<x>/`（之前只有末项带尾斜杠），并补“选哪个名字”提示。
+- **help 列对齐统一（P3-E）**：所有命令行改经 `_help_line` 渲染，描述列固定 36（之前漂移 31–39）；新增 ANSI 剥离后的列对齐护栏测试；help 命令枚举测试补齐 task current / task list / task delete / doctor / help / version。
+- **finish 措辞对称（P3-F）**：中途写失败消息补 "Check file permissions and try again."（与 start/cancel/archive 对齐）；对已 done 任务的幂等 finish 输出 Note（崩溃窗口恢复路径，不再看似新完成）。
+- **文档修正（P3-G）**：best-practices §6.3 删除“doctor 会报 Warning”的虚假承诺（doctor 无时间戳合法性检查），降级为人工判断；§6.4 `--replace` 示例补自动关闭旧任务语义（第 9 轮 P3-2 遗留）；§8.1 检查 #5 补终态指针描述。
+
+### 测试（第 10 轮 oracle-reviewer）
+
+- 新增 5 个测试：doctor 终态指针 warning（P3-A）、orphan 负向护栏（P3-B）、help 列对齐（P3-E）、finish archived 终态分支（P3-H）、cancel 幂等清指针（P3-A）。
+- 测试总数 156 → **161**，全部通过；trellis.py 1756 → 1814 行；数字同步 README / design / usage-guide / best-practices。
 
 ---
 
