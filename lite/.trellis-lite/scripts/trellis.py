@@ -37,7 +37,6 @@ from pathlib import Path
 TRELLIS_DIR = ".trellis-lite"
 FILE_DEVELOPER = ".developer"
 FILE_CURRENT_TASK = ".current-task"
-FILE_CONFIG = "config.yaml"
 DIR_TASKS = "tasks"
 DIR_ARCHIVE = "archive"
 DIR_SPEC = "spec"
@@ -213,7 +212,7 @@ def write_json(path: Path, data: dict) -> None:
 
 
 def _safe_mkdir(p: Path) -> bool:
-    """mkdir p, transparently recovering from a stray file at the same path.
+    """mkdir p, transparently recovering from a stray file at p or any ancestor.
 
     Returns True if a new directory was created (or replaced over a file),
     False if `p` was already a directory.
@@ -227,14 +226,29 @@ def _safe_mkdir(p: Path) -> bool:
     first lets the auto-repair path complete the user's intent
     (`mkdir` then succeeds).
 
+    Round 12 P3-2: also walks up the parent chain and unlinks any file
+    encountered on the way to `p`. This handles the init repair path
+    where, e.g., `.trellis-lite/tasks` is a stray file but we want to
+    create `.trellis-lite/tasks/archive` — without this, mkdir(parents=True)
+    raises NotADirectoryError on the offending parent. The walk only
+    unlinks files (never directories) and stops at the first existing dir
+    or when it reaches root, so non-`.trellis-lite` paths are never touched.
+
     Use for all `mkdir(parents=True, exist_ok=True)` calls in repair paths.
     """
     if p.is_dir():
         return False
+    # Walk parents upward: unlink any file we encounter. Stop when we hit
+    # the first existing directory (mkdir will create the rest under it).
+    cur = p.parent
+    while cur != cur.parent:  # until reaching the filesystem root
+        if cur.is_dir():
+            break
+        if cur.exists():
+            # Must be a regular file (not a dir, not a symlink to a dir).
+            cur.unlink()
+        cur = cur.parent
     if p.exists() and not p.is_dir():
-        # Stray file at the path we need as a directory — remove it.
-        # Doctor is opt-in via `trellis.py doctor --fix`, so this
-        # deletion only happens when the user explicitly asked to repair.
         p.unlink()
     p.mkdir(parents=True, exist_ok=True)
     return True
@@ -479,12 +493,16 @@ def cmd_init(args: list[str]) -> int:
     # init is the only command allowed to run without an existing .trellis-lite/
     tdir = get_repo_root(init_ok=True) / TRELLIS_DIR
 
-    # Create directories
-    (tdir / DIR_TASKS / DIR_ARCHIVE).mkdir(parents=True, exist_ok=True)
-    (tdir / DIR_SPEC).mkdir(parents=True, exist_ok=True)
+    # Create directories. P3-2 (round 12): use _safe_mkdir so a stray file at
+    # any of these paths (partial sync, mid-init crash, previous broken init)
+    # is transparently replaced with a directory instead of raising
+    # FileExistsError on Python 3.12+ — init is the user's explicit "repair
+    # it" intent, so unlinking a stray file is the right call.
+    _safe_mkdir(tdir / DIR_TASKS / DIR_ARCHIVE)
+    _safe_mkdir(tdir / DIR_SPEC)
 
     workspace = tdir / DIR_WORKSPACE / name
-    workspace.mkdir(parents=True, exist_ok=True)
+    _safe_mkdir(workspace)
 
     # Write developer file
     dev_file = tdir / FILE_DEVELOPER

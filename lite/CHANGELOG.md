@@ -178,6 +178,20 @@
 - `tests/test_session.py` 新增 `test_session_workspace_missing_does_not_traceback`（P3-4 锁回归）。
 - 测试总数 161 → **163**，全部通过；trellis.py 1814 → 1824 行；数字同步 README / design / usage-guide / best-practices。
 
+### 改进（第 12 轮 oracle-reviewer）
+
+第 12 轮审查 0 P1 / 0 P2，5 项 P3 全部评估为可选优化；处理 4 项低（实际代码加固 + 文档同步 + 死代码清理），跳过 1 项流程元（[Unreleased] 区块待 release 前 review）。审查保持事件驱动。
+
+- **删除 `FILE_CONFIG` 死代码（P3-1）**：常量全文 0 引用、无任何 `config.yaml` 访问点，删除避免误以为真实配置文件引入技术债。
+- **`_safe_mkdir` 防御网扩展到祖先路径（P3-2）**：之前只防御 `p` 本身是文件；现在上朔到 `p.parent` 链，任何祖先是文件也会被 unlink，修复了 `.trellis-lite/tasks` 是 stray file 时 `mkdir(tasks/archive)` 报 `NotADirectoryError` 的 traceback 边角。`cmd_init` 的 3 处 mkdir 同步升级为 `_safe_mkdir`。
+- **文档行数同步（P3-3）**：实际 1842 行已同步到 README / design.md / best-practices.md。
+- **测试数 163 同步（P3-4）**：README L131 / design.md L210 + L233 漏改 161 → 163，现已补齐。
+
+### 测试（第 12 轮 oracle-reviewer）
+
+- `tests/test_init.py` 新增 `test_recovers_from_file_in_init_path`（P3-2 锁回归）。
+- 测试总数 163 → **164**，全部通过；trellis.py 1824 → 1842 行；数字同步 README / design / usage-guide / best-practices。
+
 ---
 
 ## [0.6.9] - 2026-07-26

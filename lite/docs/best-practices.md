@@ -1,6 +1,6 @@
 # Trellis Lite — 最佳实践指南
 
-> 基于 11 轮 oracle-reviewer 审查沉淀 + ~1824 行实现 + 163 个 unittest 覆盖的实战经验。
+> 基于 12 轮 oracle-reviewer 审查沉淀 + ~1842 行实现 + 164 个 unittest 覆盖的实战经验。
 >
 > 配套文档：
 > - [README.md](../README.md) — 快速上手

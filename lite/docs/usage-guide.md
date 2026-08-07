@@ -310,7 +310,7 @@ archive + session
 
 ## 自带测试套件
 
-Trellis Lite 仓库自带 163 个 unittest 覆盖全部命令 + 安装脚本 + doctor + pre-commit hook + status machine + usage consistency，作为开发者和 CI 的回归保护。（install/uninstall 测试需 bash 4+，macOS 默认 bash 3.2 会自动 skip。）
+Trellis Lite 仓库自带 164 个 unittest 覆盖全部命令 + 安装脚本 + doctor + pre-commit hook + status machine + usage consistency，作为开发者和 CI 的回归保护。（install/uninstall 测试需 bash 4+，macOS 默认 bash 3.2 会自动 skip。）
 
 ```bash
 # 从仓库根运行（注意：Python 3.9+ 需要 `tests.` 包前缀，相对 import 才能工作）
@@ -325,7 +325,7 @@ python3 -m unittest tests.test_task -v
 
 | 测试文件 | 测试数 | 覆盖范围 |
 |---|---|---|
-| `test_init.py` | 7 | 目录创建、校验、幂等 |
+| `test_init.py` | 8 | 目录创建、校验、幂等、stray-file 路径恢复（第 12 轮 P3-2） |
 | `test_task.py` | 50 | create / start / finish / archive / cancel / list / delete，含路径穿越、CJK slug、连号保护、幂等重启、corrupted `task.json` 拒绝（F44-F53）、`--replace` 自动关闭旧任务及其边界（F49，P3-5a）、`--force` 绕过 corrupted 含指针清理断言（F63，P3-5b）、finish 终态分层报错含 archived 分支（P3-4，P3-H）、cancel 幂等清指针（第 10 轮 P3-A）、archive stray-file 恢复（第 11 轮 P3-3） |
 | `test_session.py` | 10 | journal 追加、commit SHA 校验（合法/非法/多长度）、未初始化、日志轮转、非编号文件过滤、workspace 缺失自建（第 11 轮 P3-4，与 workspace-is-a-file 为同一模式 F44 后续） |
 | `test_context_specs_help.py` | 12 | repo-root 守卫(4) / context(4，含 corrupted 活跃任务 warning) / specs(2) / help(2，含描述列对齐护栏 P3-E) |
@@ -350,4 +350,4 @@ CI：`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上自动跑（推
 | `.trellis-lite/spec/` | 编码规范（AI 写代码前必读） |
 | `.trellis-lite/workspace/<dev>/journal-*.md` | 跨会话记忆 |
 | `lite/docs/design.md` | 设计原理与架构文档 |
-| `lite/tests/` | 163 个 unittest（回归保护） |
+| `lite/tests/` | 164 个 unittest（回归保护） |
