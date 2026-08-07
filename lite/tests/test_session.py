@@ -127,3 +127,22 @@ class TestSession(unittest.TestCase):
         # Must mention doctor --fix (the actionable repair path).
         self.assertIn("doctor", combined.lower(),
                       f"F44 must hint at doctor --fix, got:\n{combined}")
+
+    def test_session_workspace_missing_does_not_traceback(self) -> None:
+        """P3-4 (round 11): when `.developer` exists but `workspace/<dev>/`
+        was removed entirely (e.g. a person deleted it, or it's a fresh
+        checkout of a project that only carries `.developer`), `session`
+        used to raise FileNotFoundError on the first write_text and surface
+        a raw Python traceback. Now rotate_if_full creates the workspace
+        directory on the spot, mirroring cmd_init / _check_workspace_dir."""
+        ws = self.h.tmpdir / ".trellis-lite/workspace/tester"
+        shutil.rmtree(ws)
+        self.assertFalse(ws.exists())
+        r = self.h.run(["session", "--title", "T"])
+        self.assertEqual(r.returncode, 0,
+                         f"session must transparently create a missing workspace:\n"
+                         f"{r.stdout}\n{r.stderr}")
+        # Workspace must now exist with the journal written to it.
+        self.assertTrue(ws.is_dir(), "workspace dir must be created on demand")
+        self.assertTrue((ws / "journal-1.md").is_file(),
+                        "first journal must be created on freshly-made workspace")

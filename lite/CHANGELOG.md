@@ -163,6 +163,21 @@
 - 新增 5 个测试：doctor 终态指针 warning（P3-A）、orphan 负向护栏（P3-B）、help 列对齐（P3-E）、finish archived 终态分支（P3-H）、cancel 幂等清指针（P3-A）。
 - 测试总数 156 → **161**，全部通过；trellis.py 1756 → 1814 行；数字同步 README / design / usage-guide / best-practices。
 
+### 改进（第 11 轮 oracle-reviewer）
+
+第 11 轮审查 0 P1 / 0 P2，8 项 P3 全部评估为可选优化；处理 4 项低（实际代码加固 + 文档同步），跳过 4 项极低（设计选择 / 边缘 race）。审查保持事件驱动。
+
+- **`task archive` 兼容 stray file 路径（P3-3）**：`_task_archive` 的 `tasks/archive/` 目录创建改为 `_safe_mkdir`（与 doctor --fix 同模式）。Python 3.12+ 会在路径被文件占用时抛 `FileExistsError` 暴露 traceback，新行为：透明移除 stray 文件并重建目录。
+- **`session` 兼容 workspace 完全缺失（P3-4）**：`rotate_if_full` 防御闭最后一道缺失场景—— `workspace/<dev>/` 整体不存在时 `write_text` 抛 `FileNotFoundError` 的 traceback。新行为：在 `NotADirectoryError` 检查后增加 `if not workspace.exists(): workspace.mkdir(parents=True, exist_ok=True)`，与 `cmd_init` / `_check_workspace_dir` 路径一致。
+- **顶层 `AGENTS.md` 命令清单补齐（P3-2）**：仓库根 `AGENTS.md` L84 缺 `task delete` / `doctor` / `version`，已补全为 `init, task create/start/current/finish/archive/cancel/list/delete, session, context, specs, doctor, version`。
+- **文档行数同步（P3-1）**：实际 1824 行已同步到 README / design.md / best-practices.md。
+
+### 测试（第 11 轮 oracle-reviewer）
+
+- `tests/test_task.py` 新增 `test_archive_recovers_from_file_archive_dir`（P3-3 锁回归）。
+- `tests/test_session.py` 新增 `test_session_workspace_missing_does_not_traceback`（P3-4 锁回归）。
+- 测试总数 161 → **163**，全部通过；trellis.py 1814 → 1824 行；数字同步 README / design / usage-guide / best-practices。
+
 ---
 
 ## [0.6.9] - 2026-07-26

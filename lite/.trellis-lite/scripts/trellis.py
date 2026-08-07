@@ -376,6 +376,13 @@ def rotate_if_full(workspace: Path, journals: list[tuple[int, Path]]) -> Path:
             f"workspace path is not a directory: {workspace} "
             f"(run 'trellis.py doctor --fix' to repair)"
         )
+    # P3-4 (round 11): if workspace/ doesn't exist (e.g. .developer wrote
+    # but workspace/<dev>/ never got created, or it was deleted out from
+    # under a running setup), create it on the spot so the subsequent
+    # write_text doesn't raise FileNotFoundError and surface a raw
+    # traceback. Mirrors the cmd_init / _check_workspace_dir path.
+    if not workspace.exists():
+        workspace.mkdir(parents=True, exist_ok=True)
     if not journals:
         journal = workspace / f"{JOURNAL_PREFIX}1.md"
         journal.write_text("# Journal 1\n\n", encoding="utf-8")
@@ -904,7 +911,10 @@ def _task_archive(args: list[str]) -> int:
         dest = archive_dir / month / f"{base_name}-{counter}"
         counter += 1
 
-    archive_dir.mkdir(parents=True, exist_ok=True)
+    # P3-3 (round 11): _safe_mkdir transparently recovers from a stray file at
+    # the archive root path (Python 3.12+ would otherwise raise FileExistsError
+    # and surface a raw traceback). Mirrors the pattern used in doctor --fix.
+    _safe_mkdir(archive_dir)
     shutil.move(str(task_dir), str(dest))
 
     # Clear current if it was this task (exact match on directory name)

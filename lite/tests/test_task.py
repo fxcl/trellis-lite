@@ -365,6 +365,28 @@ class TestTaskLifecycle(unittest.TestCase):
         archived = sorted(p.name for p in months[0].iterdir())
         self.assertEqual(len(archived), 2)
 
+    def test_archive_recovers_from_file_archive_dir(self) -> None:
+        """P3-3 (round 11): when `.trellis-lite/tasks/archive` is a stray
+        file (touch, partial sync, mid-init crash), `task archive` used to
+        raise FileExistsError on Python 3.12+ and surface a raw traceback.
+        Now _safe_mkdir transparently removes the file and replaces it with
+        the directory, mirroring the doctor --fix path."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        self.h.run(["task", "finish"])
+        # Replace the archive dir with a regular file of the same name.
+        archive = self.h.tmpdir / ".trellis-lite/tasks/archive"
+        shutil.rmtree(archive)
+        archive.write_text("not a directory\n", encoding="utf-8")
+        r = self.h.run(["task", "archive", "t"])
+        self.assertEqual(r.returncode, 0,
+                         f"archive must recover from stray file at archive/:\n"
+                         f"{r.stdout}\n{r.stderr}")
+        # Archive must now be a directory with the task under <month>/.
+        self.assertTrue(archive.is_dir(), "archive file must be replaced by a directory")
+        months = list(archive.iterdir())
+        self.assertEqual(len(months), 1)
+
     # ---- cancel -----------------------------------------------------------
 
     def test_cancel_keeps_directory(self) -> None:
