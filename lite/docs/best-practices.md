@@ -1,6 +1,6 @@
 # Trellis Lite — 最佳实践指南
 
-> 基于 17 轮 oracle-reviewer 审查沉淀 + ~1879 行实现 + 165 个 unittest 覆盖的实战经验。
+> 基于 17 轮 oracle-reviewer 审查沉淀 + ~1878 行实现 + 165 个 unittest 覆盖的实战经验。
 >
 > 配套文档：
 > - [README.md](../README.md) — 快速上手
@@ -809,7 +809,7 @@ AI 路径：
 - **mutating helper 走 `_safe_mkdir`（统一防御深度）**：任何 `mkdir(parents=True, exist_ok=True)` 调用都应考虑换代，除非是有意保留的两处（`rotate_if_full` 静默恢复 vs 用户可见错误，`_task_create` 显式重名 vs 静默覆盖同名数据）
 - **doctor 检查项用 idx 模式 pop**：`idx = len(list) - 1` 后 `list.pop(idx)`，防御未来插入新检查项时 pop 移除错误条目
 - **CHANGELOG `[Unreleased]` 锚点日期与标题日期一致**：GitHub markdown 锚点由标题生成，错位会导致跳转失效
-- **1700 行后主动审视单文件架构**：当前 1879 / 2000（94%，余量 121），到达 1900 前考虑抽出 helper 模块而非硬扩
+- **1700 行后主动审视单文件架构**：当前 1878 / 2000（94%，余量 122），到达 1900 前考虑抽出 helper 模块而非硬扩
 
 ### ❌ DON'T
 
