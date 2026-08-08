@@ -170,3 +170,21 @@ class TestSession(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         j = self.h.tmpdir / ".trellis-lite/workspace/tester/journal-1.md"
         self.assertNotIn("**Task**", j.read_text())
+
+    def test_session_stale_pointer_no_dangling_task_link(self) -> None:
+        """When .current-task points at a deleted task dir, session must NOT
+        inject a dangling Task: link nor degrade the title to a bare dir name.
+        With no --title it should fall back to requiring one (exit 1)."""
+        import shutil as _shutil
+        from ._helpers import find_task
+        self.h.run(["task", "create", "Fix crash", "--slug", "fix"])
+        tdir = find_task(self.h.tmpdir, "fix")
+        _shutil.rmtree(tdir)  # simulate deleted task dir → stale pointer
+        # No title → cannot derive from a dead task → usage error
+        r = self.h.run(["session", "--summary", "x"])
+        self.assertNotEqual(r.returncode, 0)
+        # Explicit title → recorded, but NO Task: link to the dead path
+        r2 = self.h.run(["session", "--title", "Manual", "--summary", "x"])
+        self.assertEqual(r2.returncode, 0)
+        j = self.h.tmpdir / ".trellis-lite/workspace/tester/journal-1.md"
+        self.assertNotIn("**Task**", j.read_text())

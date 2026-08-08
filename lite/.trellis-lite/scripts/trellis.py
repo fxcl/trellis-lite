@@ -1252,12 +1252,13 @@ def _task_list(args: list[str]) -> int:
         else:
             status_color = C_YELLOW
         # Health marker for done/archived tasks (WRAP completeness).
-        # cheap: only computed for terminal-done states; others get blank/dash.
-        if status == "done":
+        # cheap: only computed for done/archived states; others get blank/dash.
+        # Archived tasks are checked too so `task list --all` can surface
+        # tasks that were archived with an incomplete WRAP phase — archiving
+        # is irreversible, but the health signal stays honest.
+        if status in ("done", "archived"):
             issues = _task_health(t)
             health = colored("✓", C_GREEN) if not issues else colored(f"⚠ {'; '.join(issues)}", C_YELLOW)
-        elif status == "archived":
-            health = colored("✓", C_GREEN)
         elif status == "cancelled":
             health = colored("-", C_DIM)
         else:
@@ -1380,10 +1381,16 @@ def cmd_session(args: list[str]) -> int:
     task_line = ""
     if task_rel:
         task_dir = get_repo_root() / task_rel
+        # read_json returns {} for missing/corrupted task.json. Use the task
+        # only when its metadata is actually readable; a stale .current-task
+        # pointer (deleted task dir) must not inject a dangling Task: link
+        # into the journal, nor degrade the title to a bare directory name.
         meta = read_json(task_dir / FILE_TASK_JSON)
-        if not title:
-            title = meta.get("title") or Path(task_rel).name
-        task_line = f"**Task**: `{task_rel}`\n\n"
+        meta_title = meta.get("title")
+        if meta_title or task_dir.is_dir():
+            if not title:
+                title = meta_title or Path(task_rel).name
+            task_line = f"**Task**: `{task_rel}`\n\n"
 
     if not title:
         usage_for("session")

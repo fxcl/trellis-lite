@@ -936,6 +936,39 @@ class TestWrapPhaseWarnings(unittest.TestCase):
         self.assertIn("✓", r.stdout)
         self.assertNotIn("⚠", r.stdout)
 
+    # ---- _task_list --all: archived tasks keep an honest health marker ----
+
+    def test_list_all_shows_health_marker_for_archived_incomplete_task(self) -> None:
+        """task list --all must show ⚠ for a task archived with an incomplete
+        WRAP phase — archiving is irreversible, but the signal stays honest
+        instead of being masked by a hardcoded green check."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        d = find_task(self.h.tmpdir, "t")
+        (d / "prd.md").write_text("# T\n\n- [ ] unchecked\n", encoding="utf-8")
+        self.h.run(["task", "finish"])
+        self.h.run(["task", "archive", "t"])
+        r = self.h.run(["task", "list", "--all"])
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("[archived]", r.stdout)
+        self.assertIn("⚠", r.stdout)
+        self.assertIn("unchecked", r.stdout)
+
+    def test_list_all_health_ok_for_fully_wrapped_archived_task(self) -> None:
+        """task list --all shows ✓ for an archived task whose WRAP completed."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        d = find_task(self.h.tmpdir, "t")
+        (d / "prd.md").write_text("# T\n\n- [x] done\n", encoding="utf-8")
+        self.h.run(["task", "finish"])
+        self.h.run(["session", "--title", "S", "--summary", "ok"])
+        self.h.run(["task", "archive", "t"])
+        r = self.h.run(["task", "list", "--all"])
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("[archived]", r.stdout)
+        self.assertIn("✓", r.stdout)
+        self.assertNotIn("⚠", r.stdout)
+
 
 class TestTaskTemplate(unittest.TestCase):
     """Batch 4 / improvement 8: task create --template bug|feature|refactor."""
