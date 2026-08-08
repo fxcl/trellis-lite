@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -815,5 +816,173 @@ class TestTaskLifecycle(unittest.TestCase):
         # Directory must still exist (we refused BEFORE shutil.rmtree ran).
         self.assertIsNotNone(self._task_path("t"),
                              "task dir must survive refused delete on corrupted task.json")
+
+
+class TestWrapPhaseWarnings(unittest.TestCase):
+    """Batch 1: WRAP-phase completeness warnings (non-blocking)."""
+
+    def setUp(self) -> None:
+        self.h = Harness()
+
+    def tearDown(self) -> None:
+        self.h.cleanup()
+
+    # ---- _task_finish: prd.md unchecked criteria ----
+
+    def test_finish_warns_on_unchecked_criteria(self) -> None:
+        """task finish must warn (not block) when prd.md has '- [ ]' items."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        # Overwrite prd.md with unchecked criteria
+        d = find_task(self.h.tmpdir, "t")
+        (d / "prd.md").write_text(
+            "# T\n\n## Acceptance Criteria\n- [ ] one\n- [ ] two\n",
+            encoding="utf-8",
+        )
+        r = self.h.run(["task", "finish"])
+        self.assertEqual(r.returncode, 0, "finish must still succeed (warning only)")
+        self.assertIn("unchecked", r.stdout)
+        self.assertIn("acceptance", r.stdout)
+        self.assertIn("2", r.stdout)  # count appears in the warning
+
+    def test_finish_silent_when_all_checked(self) -> None:
+        """No warning when all criteria are checked '- [x]'."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        d = find_task(self.h.tmpdir, "t")
+        (d / "prd.md").write_text(
+            "# T\n\n## Acceptance Criteria\n- [x] done\n- [x] also done\n",
+            encoding="utf-8",
+        )
+        r = self.h.run(["task", "finish"])
+        self.assertEqual(r.returncode, 0)
+        self.assertNotIn("unchecked", r.stdout)
+
+    def test_finish_silent_when_prd_missing(self) -> None:
+        """No warning when prd.md is absent (nothing to check)."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        d = find_task(self.h.tmpdir, "t")
+        (d / "prd.md").unlink()
+        r = self.h.run(["task", "finish"])
+        self.assertEqual(r.returncode, 0)
+        self.assertNotIn("unchecked", r.stdout)
+
+    # ---- _task_archive: WRAP completeness ----
+
+    def test_archive_warns_when_no_session(self) -> None:
+        """task archive must warn when journal has no session entry."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        self.h.run(["task", "finish"])
+        r = self.h.run(["task", "archive", "t"])
+        self.assertEqual(r.returncode, 0, "archive must still succeed")
+        self.assertIn("no session recorded", r.stdout)
+
+    def test_archive_silent_after_session(self) -> None:
+        """No 'no session' warning once a session entry exists."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        self.h.run(["task", "finish"])
+        self.h.run(["session", "--title", "Done", "--summary", "Shipped"])
+        r = self.h.run(["task", "archive", "t"])
+        self.assertEqual(r.returncode, 0)
+        self.assertNotIn("no session recorded", r.stdout)
+
+    def test_archive_warns_on_uncommitted_spec(self) -> None:
+        """task archive must warn when spec/ has uncommitted changes."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        self.h.run(["task", "finish"])
+        self.h.run(["session", "--title", "Done", "--summary", "Shipped"])
+        # git_status_porcelain only reports changes in a git repo — init one
+        subprocess.run(["git", "init"], cwd=self.h.tmpdir, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=self.h.tmpdir, capture_output=True)
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init"],
+            cwd=self.h.tmpdir, capture_output=True,
+        )
+        # Dirty the spec dir (uncommitted change)
+        spec_dir = self.h.tmpdir / ".trellis-lite/spec"
+        (spec_dir / "new-rule.md").write_text("# Rule\n", encoding="utf-8")
+        r = self.h.run(["task", "archive", "t"])
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("spec/ has uncommitted changes", r.stdout)
+
+    # ---- _task_list: health marker column ----
+
+    def test_list_shows_health_marker_for_done_task(self) -> None:
+        """task list must show ⚠ health marker for a WRAP-incomplete done task."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        d = find_task(self.h.tmpdir, "t")
+        (d / "prd.md").write_text("# T\n\n- [ ] unchecked\n", encoding="utf-8")
+        self.h.run(["task", "finish"])
+        r = self.h.run(["task", "list"])
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("⚠", r.stdout)
+        self.assertIn("unchecked", r.stdout)
+
+    def test_list_health_ok_for_wrapped_done_task(self) -> None:
+        """task list shows ✓ when a done task is fully wrapped."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        d = find_task(self.h.tmpdir, "t")
+        (d / "prd.md").write_text("# T\n\n- [x] done\n", encoding="utf-8")
+        self.h.run(["task", "finish"])
+        self.h.run(["session", "--title", "S", "--summary", "ok"])
+        r = self.h.run(["task", "list"])
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("✓", r.stdout)
+        self.assertNotIn("⚠", r.stdout)
+
+
+class TestTaskTemplate(unittest.TestCase):
+    """Batch 4 / improvement 8: task create --template bug|feature|refactor."""
+
+    def setUp(self) -> None:
+        self.h = Harness()
+
+    def tearDown(self) -> None:
+        self.h.cleanup()
+
+    def test_create_with_bug_template(self) -> None:
+        r = self.h.run(["task", "create", "Fix crash", "--slug", "fix", "--template", "bug"])
+        self.assertEqual(r.returncode, 0, f"bug template create failed:\n{r.stdout}\n{r.stderr}")
+        d = find_task(self.h.tmpdir, "fix")
+        prd = (d / "prd.md").read_text(encoding="utf-8")
+        self.assertIn("## Reproduction", prd)
+        self.assertIn("Root Cause Hypothesis", prd)
+        self.assertIn("# Fix crash", prd)
+
+    def test_create_with_feature_template(self) -> None:
+        r = self.h.run(["task", "create", "Add export", "--template", "feature"])
+        self.assertEqual(r.returncode, 0)
+        d = find_task(self.h.tmpdir, "add-export")
+        self.assertIn("## Requirements", (d / "prd.md").read_text(encoding="utf-8"))
+
+    def test_create_with_refactor_template(self) -> None:
+        r = self.h.run(["task", "create", "Cleanup", "--template", "refactor"])
+        self.assertEqual(r.returncode, 0)
+        d = find_task(self.h.tmpdir, "cleanup")
+        self.assertIn("No behavior change", (d / "prd.md").read_text(encoding="utf-8"))
+
+    def test_create_rejects_unknown_template(self) -> None:
+        r = self.h.run(["task", "create", "X", "--template", "nope"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("unknown template", r.stdout + r.stderr)
+        # No task dir should be created on rejection (archive/ is pre-created
+        # by init, so only assert no *task* directories appeared).
+        tasks_dir = self.h.tmpdir / ".trellis-lite/tasks"
+        leftovers = [p for p in tasks_dir.iterdir() if p.is_dir() and p.name != "archive"]
+        self.assertEqual(leftovers, [])
+
+    def test_create_without_template_uses_default_skeleton(self) -> None:
+        r = self.h.run(["task", "create", "Plain", "--slug", "plain"])
+        self.assertEqual(r.returncode, 0)
+        d = find_task(self.h.tmpdir, "plain")
+        prd = (d / "prd.md").read_text(encoding="utf-8")
+        self.assertIn("One-sentence description", prd)
+        self.assertNotIn("Reproduction", prd)
 
 

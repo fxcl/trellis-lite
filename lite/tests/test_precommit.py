@@ -134,6 +134,61 @@ class TestPreCommitHook(unittest.TestCase):
         self.assertIn("planning", combined.lower(),
                       f"expected planning warning in output:\n{combined}")
 
+    def test_hook_warns_on_incomplete_wrap_done_task(self) -> None:
+        """A done task with unchecked PRD criteria + no session must trigger
+        the WRAP reminder, without blocking the commit."""
+        from ._helpers import find_task
+        self._install_hook()
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        tdir = find_task(self.h.tmpdir, "t")
+        (tdir / "prd.md").write_text("# PRD\n\n- [ ] verify\n", encoding="utf-8")
+        self.h.run(["task", "finish"])
+        # Trigger the hook
+        (self.h.tmpdir / "f.py").write_text("pass\n")
+        subprocess.run(
+            ["git", "add", "f.py"],
+            cwd=str(self.h.tmpdir), capture_output=True, text=True,
+        )
+        r = subprocess.run(
+            ["git", "commit", "-m", "x"],
+            cwd=str(self.h.tmpdir), capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0,
+                         f"WRAP reminder must not block:\n{r.stdout}\n{r.stderr}")
+        combined = r.stdout + r.stderr
+        self.assertIn("WRAP", combined)
+        self.assertIn("Last done task", combined)
+
+    def test_hook_silent_when_wrap_complete(self) -> None:
+        """Fully wrapped done task → no WRAP reminder."""
+        from ._helpers import find_task
+        self._install_hook()
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        tdir = find_task(self.h.tmpdir, "t")
+        (tdir / "prd.md").write_text("# PRD\n\n- [x] done\n", encoding="utf-8")
+        self.h.run(["task", "finish"])
+        self.h.run(["session", "--title", "s", "--summary", "ok"])
+        # Commit everything (incl. spec/) so the working tree is clean —
+        # otherwise the WRAP check correctly flags "spec/ has uncommitted
+        # changes" because the whole project is still untracked.
+        subprocess.run(["git", "add", "-A"], cwd=str(self.h.tmpdir),
+                       capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-q", "-m", "wrap"], cwd=str(self.h.tmpdir),
+                       capture_output=True, text=True)
+        (self.h.tmpdir / "f.py").write_text("pass\n")
+        subprocess.run(
+            ["git", "add", "f.py"],
+            cwd=str(self.h.tmpdir), capture_output=True, text=True,
+        )
+        r = subprocess.run(
+            ["git", "commit", "-m", "x"],
+            cwd=str(self.h.tmpdir), capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0)
+        self.assertNotIn("incomplete WRAP", r.stdout + r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

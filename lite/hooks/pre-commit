@@ -9,6 +9,7 @@
 #   1. .trellis-lite/ is initialized
 #   2. doctor reports no problems (use --no-verify to skip when broken)
 #   3. No active task in `planning` state (warn only)
+#   4. Last done task has a complete WRAP phase (warn only)
 #
 # To bypass the hook entirely (e.g. urgent hotfix):
 #   git commit --no-verify
@@ -62,6 +63,18 @@ if echo "$CTX_OUTPUT" | grep -q "Status: planning"; then
     echo ""
     echo "⚠ Warning: An active task is still in 'planning' status."
     echo "  Run 'task start <name>' when ready to begin work."
+    # Warning only — don't exit non-zero
+fi
+
+# Check 3: WRAP-phase reminder — if the most recent done task shows an
+#   incomplete wrap (unchecked PRD criteria / no session recorded), context
+#   prints a "Last done task: ... ⚠ ..." line. Surface it here so the commit
+#   prompt reminds you to close the loop. Never blocks the commit.
+if echo "$CTX_OUTPUT" | grep -q "Last done task:.*⚠"; then
+    echo ""
+    echo "⚠ Warning: Last done task has an incomplete WRAP phase:"
+    echo "$CTX_OUTPUT" | grep "Last done task:" | sed 's/^/  /'
+    echo "  Consider: check off prd.md criteria, record a session, commit specs."
     # Warning only — don't exit non-zero
 fi
 

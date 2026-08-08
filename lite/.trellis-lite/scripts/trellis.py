@@ -87,7 +87,7 @@ def colored(text: str, color: str) -> str:
 USAGE: dict[str, str] = {
     "init":         "trellis.py init <your-name>",
     "task":         "trellis.py task <create|start|current|finish|archive|cancel|list|delete>",
-    "task create":  'trellis.py task create "<title>" [--slug <name>] [--replace]',
+    "task create":  'trellis.py task create "<title>" [--slug <name>] [--replace] [--template bug|feature|refactor]',
     "task start":   "trellis.py task start <name>",
     "task archive": "trellis.py task archive <name>",
     "task cancel":  "trellis.py task cancel <name>",
@@ -430,6 +430,90 @@ def rotate_if_full(workspace: Path, journals: list[tuple[int, Path]]) -> Path:
     return journal
 
 
+# ============================================================================
+# WRAP-phase completeness checks (shared by finish / archive / context / doctor)
+# ============================================================================
+
+def _count_unchecked_criteria(task_dir: Path) -> int:
+    """Count '- [ ]' items in prd.md. Returns 0 if prd.md missing/unreadable.
+
+    Read-only, silent on any failure — a missing or malformed prd.md must not
+    block task finish/archive; it simply means 'nothing unchecked to warn about'.
+    """
+    prd = task_dir / "prd.md"
+    if not prd.is_file():
+        return 0
+    try:
+        return sum(
+            1 for line in prd.read_text(encoding="utf-8").splitlines()
+            if re.match(r"^\s*-\s*\[ \]", line)
+        )
+    except OSError:
+        return 0
+
+
+def _wrap_completeness_warnings(task_dir: Path) -> list[str]:
+    """Read-only WRAP-phase checks for a task. Returns warnings (may be empty).
+
+    Checks (all silent-degrade to empty on error):
+      (a) journal has at least one session entry (not just the '# Journal N' header)
+      (b) spec/ has no uncommitted changes (task learnings should be committed)
+
+    Used by _task_archive and (later) cmd_context / _task_list / doctor so the
+    same definition of 'WRAP incomplete' is applied consistently everywhere.
+    """
+    warnings: list[str] = []
+
+    # (a) journal completeness: any journal file containing a '## YYYY-MM-DD' entry
+    ws = get_workspace_dir()
+    has_entry = False
+    if ws and ws.is_dir():
+        for _, journal in list_journals(ws):
+            try:
+                if re.search(r"^## \d{4}-\d{2}-\d{2}", journal.read_text(encoding="utf-8"), re.M):
+                    has_entry = True
+                    break
+            except OSError:
+                continue
+    if not has_entry:
+        warnings.append("no session recorded (run 'session --title ... --summary ...')")
+
+    # (b) spec/ uncommitted changes — learnings from this task should be captured
+    try:
+        porcelain = git_status_porcelain()
+        spec_prefixes = (f"{TRELLIS_DIR}/{DIR_SPEC}/", f"{DIR_SPEC}/")
+        spec_dirty = any(
+            line[3:].strip().startswith(spec_prefixes)
+            for line in porcelain.splitlines()
+            if len(line) > 3
+        )
+        if spec_dirty:
+            warnings.append("spec/ has uncommitted changes (commit task learnings)")
+    except Exception:
+        pass  # git unavailable — skip silently
+
+    return warnings
+
+
+def _task_health(task_dir: Path, *, verbose: bool = False) -> list[str]:
+    """Combined WRAP-health issues for a done task: unchecked PRD criteria
+    plus journal/spec completeness. Single source of truth so task list,
+    context, and doctor stay consistent.
+
+    verbose=False → compact "prd N unchecked" (inline list/context use);
+    verbose=True  → "prd.md has N unchecked acceptance criteria" (doctor).
+    """
+    issues: list[str] = []
+    unchecked = _count_unchecked_criteria(task_dir)
+    if unchecked:
+        if verbose:
+            issues.append(f"prd.md has {unchecked} unchecked acceptance criteria")
+        else:
+            issues.append(f"prd {unchecked} unchecked")
+    issues.extend(_wrap_completeness_warnings(task_dir))
+    return issues
+
+
 class AmbiguousTaskName(Exception):
     """Raised when a task name resolves to multiple matching directories.
 
@@ -596,19 +680,68 @@ def cmd_task(args: list[str]) -> int:
         return 1
 
 
+_PRD_TEMPLATES: dict[str, str] = {
+    "bug": """## Goal
+<!-- What is broken and what "fixed" looks like -->
+
+## Reproduction
+<!-- Steps, input, or conditions that trigger the bug -->
+1.
+
+## Root Cause Hypothesis
+<!-- Best current guess; update as you investigate -->
+
+## Requirements
+<!-- What the fix must and must not change -->
+
+## Acceptance Criteria
+- [ ] Bug no longer reproduces with the steps above
+- [ ] Regression test added covering this case
+
+## Notes
+""",
+    "feature": """## Goal
+<!-- One-sentence user-facing outcome -->
+
+## Requirements
+<!-- Functional requirements, in priority order -->
+
+## Acceptance Criteria
+- [ ] Happy path works end-to-end
+- [ ] Edge cases handled (empty input, errors)
+
+## Notes
+""",
+    "refactor": """## Goal
+<!-- What improves (readability, perf, structure) — behavior must NOT change -->
+
+## Scope
+<!-- Files/modules touched; explicitly list what's out of scope -->
+
+## Acceptance Criteria
+- [ ] All existing tests still pass unchanged
+- [ ] No behavior change (only structure/naming/perf)
+
+## Notes
+""",
+}
+
+
 def _task_create(args: list[str]) -> int:
     """Create a new task directory with prd.md, set as current.
 
     By default refuses to create if another task is active (the "one task at a time"
     rule). Pass --replace to take over an existing active task.
+    Pass --template bug|feature|refactor for a pre-filled prd.md.
     """
     if not args:
         usage_for("task create")
         return 1
 
-    # Parse: title + optional --slug + optional --replace
+    # Parse: title + optional --slug + --replace + --template
     slug = None
     replace = False
+    template = None
     title_parts = []
     i = 0
     while i < len(args):
@@ -618,9 +751,20 @@ def _task_create(args: list[str]) -> int:
         elif args[i] == "--replace":
             replace = True
             i += 1
+        elif args[i] == "--template" and i + 1 < len(args):
+            template = args[i + 1]
+            i += 2
         else:
             title_parts.append(args[i])
             i += 1
+
+    if template is not None and template not in _PRD_TEMPLATES:
+        print(colored(
+            f"Error: unknown template '{template}'. "
+            f"Available: {', '.join(sorted(_PRD_TEMPLATES))}",
+            C_RED,
+        ))
+        return 1
 
     raw_title = " ".join(title_parts)
     # Strip a single pair of matching surrounding quotes ("" or ''), not each end independently
@@ -668,8 +812,11 @@ def _task_create(args: list[str]) -> int:
     }
     write_json(task_dir / FILE_TASK_JSON, task_json)
 
-    # Write default prd.md
-    prd_content = f"""# {title}
+    # Write prd.md (default skeleton or the named template)
+    if template:
+        prd_content = f"# {title}\n\n{_PRD_TEMPLATES[template]}"
+    else:
+        prd_content = f"""# {title}
 
 ## Goal
 <!-- One-sentence description of what this task achieves -->
@@ -892,6 +1039,17 @@ def _task_finish(args: list[str]) -> int:
         ))
         return 1
 
+    # WRAP-phase hint: warn (non-blocking) when prd.md acceptance criteria are
+    # still unchecked. The task is legitimately 'done' code-wise, but the PRD
+    # contract says criteria should be verified before finishing.
+    unchecked = _count_unchecked_criteria(task_dir)
+    if unchecked:
+        print(colored(
+            f"Warning: prd.md has {unchecked} unchecked acceptance "
+            f"criterion/criteria. Verify them or check them off before archiving.",
+            C_YELLOW,
+        ))
+
     clear_current_task()
     print(colored(f"✓ Task finished: {current}", C_GREEN))
     print(colored("  Run 'task archive <name>' when ready to archive.", C_DIM))
@@ -945,6 +1103,12 @@ def _task_archive(args: list[str]) -> int:
             C_RED,
         ))
         return 1
+
+    # WRAP-phase completeness hints (non-blocking): surface unfinished WRAP
+    # work so the user can decide to fix it before the task disappears into
+    # archive/. Read-only; any check failure degrades to silence.
+    for w in _wrap_completeness_warnings(task_dir):
+        print(colored(f"Warning (WRAP incomplete): {w}", C_YELLOW))
 
     # Move to archive
     archive_dir = get_tasks_dir() / DIR_ARCHIVE
@@ -1087,7 +1251,18 @@ def _task_list(args: list[str]) -> int:
             status_color = C_DIM
         else:
             status_color = C_YELLOW
-        print(f"  {marker} {t.name}  {colored(f'[{status}]', status_color)}  {title}")
+        # Health marker for done/archived tasks (WRAP completeness).
+        # cheap: only computed for terminal-done states; others get blank/dash.
+        if status == "done":
+            issues = _task_health(t)
+            health = colored("✓", C_GREEN) if not issues else colored(f"⚠ {'; '.join(issues)}", C_YELLOW)
+        elif status == "archived":
+            health = colored("✓", C_GREEN)
+        elif status == "cancelled":
+            health = colored("-", C_DIM)
+        else:
+            health = ""
+        print(f"  {marker} {t.name}  {colored(f'[{status}]', status_color)}  {health}  {title}")
     return 0
 
 
@@ -1196,6 +1371,20 @@ def cmd_session(args: list[str]) -> int:
         else:
             i += 1
 
+    # Improvement 7: when --title is omitted, fall back to the active task's
+    # title and append a `Task: <path>` line so the journal entry is linked.
+    # Explicit --title keeps the old behavior exactly (no Task line injected
+    # unless there is an active task — see below, we attach it in both cases
+    # only when a task is active; this is informational, never blocking).
+    task_rel = get_current_task()
+    task_line = ""
+    if task_rel:
+        task_dir = get_repo_root() / task_rel
+        meta = read_json(task_dir / FILE_TASK_JSON)
+        if not title:
+            title = meta.get("title") or Path(task_rel).name
+        task_line = f"**Task**: `{task_rel}`\n\n"
+
     if not title:
         usage_for("session")
         return 1
@@ -1240,6 +1429,7 @@ def cmd_session(args: list[str]) -> int:
     # Append session entry
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     entry = f"\n## {now} — {title}\n\n"
+    entry += task_line
     if commit:
         entry += f"**Commits**: `{commit}`\n\n"
     if summary:
@@ -1311,6 +1501,26 @@ def cmd_context(args: list[str]) -> int:
         print(f"    Artifacts: {' '.join(artifacts)}")
     else:
         print(colored("  Active task: none", C_DIM))
+
+    # WRAP-phase completeness of the most recent non-archived task. Helps the
+    # AI (and user) notice at session start that the previous task closed
+    # without finishing WRAP (unchecked criteria / no session / uncommitted specs).
+    tasks_dir = get_tasks_dir()
+    if tasks_dir.is_dir():
+        candidates = sorted(
+            (t for t in tasks_dir.iterdir() if t.is_dir() and t.name != DIR_ARCHIVE),
+            reverse=True,
+        )
+        for t in candidates:
+            data = read_json(t / FILE_TASK_JSON)
+            if data.get("status") == "done":
+                wrap_issues = _task_health(t)
+                if wrap_issues:
+                    print(colored(
+                        f"  Last done task: {t.name}  ⚠ {'; '.join(wrap_issues)}",
+                        C_YELLOW,
+                    ))
+                break
 
     # Git
     branch = git_branch()
@@ -1510,6 +1720,9 @@ def cmd_doctor(args: list[str]) -> int:
 
     # 9. Working tree state (informational)
     _check_working_tree()
+
+    # 10. WRAP-phase completeness of done tasks (informational, non-blocking)
+    _check_wrap_completeness(tdir, warnings)
 
     return _doctor_finish(problems, warnings)
 
@@ -1831,6 +2044,28 @@ def _check_working_tree() -> None:
     dirty = git_status_porcelain()
     if dirty:
         print(colored("  ·", C_DIM), f"{len(dirty.splitlines())} dirty file(s) in working tree (informational)")
+
+
+def _check_wrap_completeness(tdir: Path, warnings: list[str]) -> None:
+    """Check #10: done tasks should have completed WRAP (checked criteria,
+    recorded session, committed specs). Warnings only — never blocks."""
+    tasks_dir = tdir / DIR_TASKS
+    if not tasks_dir.is_dir():
+        return
+    found = 0
+    for t in sorted(tasks_dir.iterdir()):
+        if not t.is_dir() or t.name == DIR_ARCHIVE:
+            continue
+        data = read_json(t / FILE_TASK_JSON)
+        if data.get("status") != "done":
+            continue
+        for issue in _task_health(t, verbose=True):
+            warnings.append(f"task {t.name}: {issue}")
+            found += 1
+    if found == 0:
+        print(colored("  ✓", C_GREEN), "WRAP completeness: all done tasks are fully wrapped")
+    else:
+        print(colored("  ⚠", C_YELLOW), f"WRAP completeness: {found} issue(s) in done tasks")
 
 
 def _doctor_finish(problems: list[str], warnings: list[str]) -> int:

@@ -97,6 +97,32 @@ class TestContext(unittest.TestCase):
         self.assertNotIn("Title:  ?", r.stdout)
         self.assertNotIn("Status: ?", r.stdout)
 
+    def test_context_shows_wrap_status_for_last_done_task(self) -> None:
+        """Batch 2: context surfaces WRAP incompleteness of the most recent
+        done task — the AI's resume entry point must see un-closed loops."""
+        from ._helpers import find_task
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        tdir = find_task(self.h.tmpdir, "t")
+        (tdir / "prd.md").write_text("# PRD\n\n- [ ] verify output\n", encoding="utf-8")
+        self.h.run(["task", "finish"])
+        r = self.h.run(["context"])
+        self.assertEqual(r.returncode, 0, "context is a read — must stay exit 0")
+        self.assertIn("Last done task", r.stdout)
+        self.assertIn("unchecked", r.stdout)
+
+    def test_context_no_wrap_warning_for_fully_wrapped_task(self) -> None:
+        from ._helpers import find_task
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        tdir = find_task(self.h.tmpdir, "t")
+        (tdir / "prd.md").write_text("# PRD\n\n- [x] done\n", encoding="utf-8")
+        self.h.run(["task", "finish"])
+        self.h.run(["session", "--title", "wrapped", "--summary", "all good"])
+        r = self.h.run(["context"])
+        self.assertEqual(r.returncode, 0)
+        self.assertNotIn("⚠", r.stdout)
+
 
 class TestSpecs(unittest.TestCase):
     def setUp(self) -> None:

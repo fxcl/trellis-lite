@@ -146,3 +146,27 @@ class TestSession(unittest.TestCase):
         self.assertTrue(ws.is_dir(), "workspace dir must be created on demand")
         self.assertTrue((ws / "journal-1.md").is_file(),
                         "first journal must be created on freshly-made workspace")
+
+    def test_session_defaults_title_to_active_task(self) -> None:
+        """Improvement 7: `session` without --title uses the active task's
+        title and records a Task: link line in the journal."""
+        self.h.run(["task", "create", "Fix login crash", "--slug", "fix"])
+        r = self.h.run(["session", "--summary", "found root cause"])
+        self.assertEqual(r.returncode, 0, f"must not require --title when a task is active\n{r.stdout}")
+        self.assertIn("Fix login crash", r.stdout)
+        j = self.h.tmpdir / ".trellis-lite/workspace/tester/journal-1.md"
+        content = j.read_text()
+        self.assertIn("Fix login crash", content)
+        self.assertIn("**Task**: `.trellis-lite/tasks/", content)
+
+    def test_session_still_requires_title_without_active_task(self) -> None:
+        r = self.h.run(["session", "--summary", "orphan"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Usage:", r.stdout + r.stderr)
+
+    def test_session_explicit_title_no_task_line_without_active_task(self) -> None:
+        """No active task → no Task: line injected (zero-behavior-change path)."""
+        r = self.h.run(["session", "--title", "Solo", "--summary", "s"])
+        self.assertEqual(r.returncode, 0)
+        j = self.h.tmpdir / ".trellis-lite/workspace/tester/journal-1.md"
+        self.assertNotIn("**Task**", j.read_text())

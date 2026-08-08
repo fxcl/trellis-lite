@@ -233,12 +233,23 @@ USAGE 字典增加对应条目；test_usage_consistency.py 的 expected keys 需
 
 ## 六之附：落地路线图
 
-| 批次 | 内容 | 依赖 |
-|------|------|------|
-| Batch 1（闭环核心） | 改进 1 + 2（finish/archive 警告）+ 各自测试 | 无 |
-| Batch 2（可见性） | 改进 3 + 4（context/list 健康度） | 依赖 Batch 1 的共用检查函数 |
-| Batch 3（体检） | 改进 5（doctor 第 10 项） | 依赖 Batch 1 |
-| Batch 4（体验） | 改进 6/7/8 | 独立，可按需挑选 |
+| 批次 | 内容 | 依赖 | 状态 |
+|------|------|------|------|
+| Batch 1（闭环核心） | 改进 1 + 2（finish/archive 警告）+ 各自测试 | 无 | ✅ 已落地（2026-08-08，6 测试） |
+| Batch 2（可见性） | 改进 3 + 4（context/list 健康度） | 依赖 Batch 1 的共用检查函数 | ✅ 已落地（2026-08-08，4 测试） |
+| Batch 3（体检） | 改进 5（doctor 第 10 项） | 依赖 Batch 1 | ✅ 已落地（2026-08-08，2 测试） |
+| Batch 4（体验） | 改进 6/7/8 | 独立，可按需挑选 | ✅ 已落地（2026-08-08，10 测试） |
+
+落地验证：全套 188 测试通过（skipped=15 为既有项），真实数据冒烟确认
+todolist 任务在 `task list` / `doctor` 中正确暴露 2 个 WRAP 问题。
+
+Batch 4 实施备注：
+- 改进 7（session 自动关联）：`session` 无 `--title` 时取活跃任务标题，
+  journal 条目附 `**Task**: <path>` 行；无活跃任务时行为与之前完全一致。
+- 改进 8（--template）：模板内置于 trellis.py 的 `_PRD_TEMPLATES`
+  （bug/feature/refactor 三份），保持单文件零依赖哲学，不引入 templates/ 目录。
+- 改进 6（pre-commit）：hook 第 4 项检查复用 context 的 "Last done task … ⚠"
+  输出，WRAP 不完整时打印提醒，绝不阻塞 commit。
 
 抽取共用函数 `_count_unchecked_criteria` 与 `_wrap_completeness_warnings`
 到 trellis.py 的 helpers 区（紧随 set_status 之后），避免四处复制逻辑。

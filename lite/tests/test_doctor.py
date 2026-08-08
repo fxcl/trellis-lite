@@ -427,6 +427,35 @@ class TestDoctor(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0,
                              "doctor must surface corrupted active task as a problem")
 
+    def test_doctor_wrap_completeness_healthy(self) -> None:
+        """Check #10: a fully-wrapped done task → ✓ line, no warnings."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        # check off all criteria
+        d = next(p for p in (self.h.tmpdir / ".trellis-lite/tasks").iterdir()
+                 if p.is_dir() and p.name != "archive")
+        (d / "prd.md").write_text("# T\n\n- [x] done\n", encoding="utf-8")
+        self.h.run(["task", "finish"])
+        self.h.run(["session", "--title", "S", "--summary", "did it"])
+        r = self._run(["doctor"])
+        self.assertIn("WRAP completeness: all done tasks are fully wrapped", r.stdout)
+        self.assertNotIn("unchecked acceptance", r.stdout)
+        self.assertNotIn("no session recorded", r.stdout)
+
+    def test_doctor_wrap_completeness_warns_on_incomplete(self) -> None:
+        """Check #10: done task with unchecked criteria + no session → warnings."""
+        self.h.run(["task", "create", "T", "--slug", "t"])
+        self.h.run(["task", "start", "t"])
+        d = next(p for p in (self.h.tmpdir / ".trellis-lite/tasks").iterdir()
+                 if p.is_dir() and p.name != "archive")
+        (d / "prd.md").write_text("# T\n\n- [ ] a\n- [ ] b\n", encoding="utf-8")
+        self.h.run(["task", "finish"])
+        r = self._run(["doctor"])
+        self.assertIn("WRAP completeness", r.stdout)
+        self.assertIn("issue(s) in done tasks", r.stdout)
+        self.assertIn("unchecked acceptance criteria", r.stdout)
+        self.assertIn("no session recorded", r.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
