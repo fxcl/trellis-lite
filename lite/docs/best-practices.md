@@ -4,8 +4,11 @@
 >
 > 配套文档：
 > - [README.md](../README.md) — 快速上手
+> - [installation-guide.md](installation-guide.md) — 安装手顺
+> - [trellis-cli.md](trellis-cli.md) — trellis.py 完整使用指南
 > - [design.md](design.md) — 设计原理与架构
 > - [usage-guide.md](usage-guide.md) — 完整使用示例
+> - [platforms.md](platforms.md) — 平台支持与实现逻辑
 > - [workflow-checklist.md](workflow-checklist.md) — 任务级 checklist（可复制）
 > - [exit-codes.md](exit-codes.md) — 退出码语义与可逆性原则
 > - [architecture-review.md](architecture-review.md) — 架构审查记录与债务清单

@@ -2,7 +2,7 @@
 
 > 每次开新任务，把对应阶段的清单复制到笔记里逐项打勾。
 >
-> 配套文档：[README.md](../README.md) · [usage-guide.md](usage-guide.md) · [best-practices.md](best-practices.md) · [design.md](design.md)
+> 配套文档：[README.md](../README.md) · [installation-guide.md](installation-guide.md) · [usage-guide.md](usage-guide.md) · [trellis-cli.md](trellis-cli.md) · [best-practices.md](best-practices.md) · [design.md](design.md) · [platforms.md](platforms.md)
 
 ---
 
