@@ -1,6 +1,6 @@
 # Trellis Lite — 最佳实践指南
 
-> 基于 17 轮 oracle-reviewer 审查沉淀 + ~1878 行实现 + 165 个 unittest 覆盖的实战经验。
+> 基于 19 轮 oracle-reviewer 审查沉淀 + ~1888 行实现 + 166 个 unittest 覆盖的实战经验。
 >
 > 配套文档：
 > - [README.md](../README.md) — 快速上手
@@ -343,7 +343,7 @@ python3 trellis.py task start my-task     # 幂等：返回 True，不重写 sta
 |---|---|---|
 | `created` | `_task_create`（永不变） | — |
 | `started` | 首次 `task start` | `planning` 任务**不有**（未开始，不是漏字段） |
-| `finished` | `task finish` | `planning` / `in_progress` / `cancelled` 任务**不有** |
+| `finished` | `task finish` | `planning` / `in_progress` 任务**不有**；`done→cancelled` 的任务可能保留（`set_status` 只增字段不删） |
 | `archived` | `task archive` | 仅 `archived` 任务上有 |
 | `cancelled` | `task cancel` | 仅 `cancelled` 任务上有 |
 
@@ -405,7 +405,7 @@ Lite 的退出码遵循一条原则：**不可逆操作失败必须中止（retu
 | `task start` | **拒绝、活跃指针不变** | 1 | 副作用：调 `set_current_task()` 切换指针。corrupted 后切换 → 后续 finish/cancel 看不到元数据（split-brain） |
 | `task archive` | **拒绝、不移动目录** | 1 | 副作用：`shutil.move` 到 `archive/YYYY-MM/`。corrupted 后移动 → orphan（task list 看到 `[?]`） |
 | `task cancel` | **拒绝、活跃指针不变** | 1 | 副作用：清理活跃指针。corrupted 后清理 → split-brain（指针已清但 task.json 不可读） |
-| `task delete` | **拒绝、不删除目录**（默认）；`--force` 旁路状态校验但**仍预检 corrupted** | 1 | 副作用：`shutil.rmtree` 永久删除目录。corrupted 后删除 → 不可读任务被误删不可逆 |
+| `task delete` | **拒绝、不删除目录**（默认）；`--force` 同时旁路状态校验与 corrupted 预检（最后手段，直接删除） | 默认 1 / `--force` 0 | 副作用：`shutil.rmtree` 永久删除目录。默认 corrupted 拒绝防误删；`--force` 是用户显式承担风险的逃生口 |
 
 **统一原则**：任何**会修改活跃指针或目录位置**的 mutating task 命令（含 `delete`），遇到 `task.json` 缺失或损坏一律拒绝 + 返回 1，避免 split-brain。修复路径：`trellis.py doctor --fix`（推荐）/ `task delete --force <name>`（最后手段）。
 
@@ -809,7 +809,7 @@ AI 路径：
 - **mutating helper 走 `_safe_mkdir`（统一防御深度）**：任何 `mkdir(parents=True, exist_ok=True)` 调用都应考虑换代，除非是有意保留的两处（`rotate_if_full` 静默恢复 vs 用户可见错误，`_task_create` 显式重名 vs 静默覆盖同名数据）
 - **doctor 检查项用 idx 模式 pop**：`idx = len(list) - 1` 后 `list.pop(idx)`，防御未来插入新检查项时 pop 移除错误条目
 - **CHANGELOG `[Unreleased]` 锚点日期与标题日期一致**：GitHub markdown 锚点由标题生成，错位会导致跳转失效
-- **1700 行后主动审视单文件架构**：当前 1878 / 2000（94%，余量 122），到达 1900 前考虑抽出 helper 模块而非硬扩
+- **1700 行后主动审视单文件架构**：当前 1888 / 2000（94%，余量 112），到达 1900 前考虑抽出 helper 模块而非硬扩
 
 ### ❌ DON'T
 
@@ -834,14 +834,14 @@ AI 路径：
 
 ### 17.1 跨调用者追踪清单（5 个对称严格模式）
 
-跨调用者追踪是"深度收敛"的核心证据。审计者必须手工验证以下跨调用者契约：
+跨调用者追踪是"深度收敛"的核心证据。审计者必须手工验证以下跨调用者契约（验证点以**符号名 + 校验语义**为准；具体行号随代码演进漂移，不作为契约锚点）：
 
 | 契约 | 验证点 | 最近加固轮次 |
 |---|---|---|
-| 5 个 mutating 命令 corrupted 预检 | L738 / L835 / L893 / L975 / L1110 一致 `read_json_strict` + exit 1 | 第 6-7 轮 |
-| 7 类状态机允许转移 | `ALLOWED_TRANSITIONS` 集中 + `set_status` 幂等 | 第 6 轮 F6 |
-| doctor 9 项检查 idx 模式 | 9 项全部 `idx = len(list) - 1` + `list.pop(idx)` | 第 15 轮 P3-1 |
-| `_safe_mkdir` 防御网深度 | 5 修复点 + `write_json`（含函数自身 + 全部调用点） | 第 16 轮 P3-A |
+| 5 个 mutating 命令 corrupted 预检 | `_task_start` / `_task_finish` / `_task_archive` / `_task_cancel` / `_task_delete` 一致 `read_json_strict` + exit 1（副作用前预检） | 第 6-7 轮 |
+| 5 状态 + 9 正向转移 | `ALLOWED_TRANSITIONS` 集中 + `set_status` 幂等 + 转移合法性校验 | 第 6 轮 F6 |
+| doctor idx 模式 | 5 项有 fix 路径的检查全部 `idx = len(list) - 1` + `list.pop(idx)`（其余 4 项无 fix，N/A） | 第 15 轮 P3-1 |
+| `_safe_mkdir` 防御网深度 | 6 外部修复点 + `write_json` 内部（cmd_init×3 + `_task_archive` + doctor×2 + `write_json`） | 第 16 轮 P3-A |
 | 三处 raw mkdir 有意保留 | `rotate_if_full` + `_task_create` + `_safe_mkdir` 内部 | 第 16 轮验证 |
 
 ### 17.2 事件驱动审查原则
@@ -869,7 +869,7 @@ wc -l lite/.trellis-lite/scripts/trellis.py
 cd lite && python3 -m unittest tests.test_* 2>&1 | grep "Ran"
 
 # 2. grep 所有需要同步的位置
-grep -rn "~1878\|~1879\|165 个\|164 个\|163 个" lite/README.md lite/docs/
+grep -rn "~1878\|~1879\|~1888\|165 个\|166 个\|164 个\|163 个" lite/README.md lite/docs/
 
 # 3. 一次性 SearchReplace 同步全部位置
 ```

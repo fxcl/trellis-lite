@@ -112,6 +112,8 @@ Add a `task delete <name>` subcommand to trellis.py that removes a task director
 - [ ] Non-existent task → error: "task not found"
 ```
 
+> **注**：以上是 AI 生成的 PRD 初稿（演示用）。最终交付实现取消了交互确认，改为 `status == cancelled` 闸门 + `--force` 旁路（活跃任务 `--force` 可删），实际交付语义见 [best-practices.md §6.6](best-practices.md)。
+
 **AI 反馈给你**：
 
 > PRD 已写入。要点：
@@ -153,8 +155,8 @@ python3 -c "import py_compile; py_compile.compile('.trellis-lite/scripts/trellis
 
 # 端到端测试
 python3 .trellis-lite/scripts/trellis.py task create "test-delete" --slug del-me
-python3 .trellis-lite/scripts/trellis.py task delete del-me              # 应提示确认
-python3 .trellis-lite/scripts/trellis.py task delete del-me --force      # 应删除
+python3 .trellis-lite/scripts/trellis.py task delete del-me              # 应拒绝（planning 非 cancelled）
+python3 .trellis-lite/scripts/trellis.py task delete del-me --force      # 应删除（--force 旁路状态闸门）
 python3 .trellis-lite/scripts/trellis.py task delete nonexistent         # 应报错
 ```
 
@@ -310,7 +312,7 @@ archive + session
 
 ## 自带测试套件
 
-Trellis Lite 仓库自带 165 个 unittest 覆盖全部命令 + 安装脚本 + doctor + pre-commit hook + status machine + usage consistency，作为开发者和 CI 的回归保护。（install/uninstall 测试需 bash 4+，macOS 默认 bash 3.2 会自动 skip。）
+Trellis Lite 仓库自带 166 个 unittest 覆盖全部命令 + 安装脚本 + doctor + pre-commit hook + status machine + usage consistency，作为开发者和 CI 的回归保护。（install/uninstall 测试需 bash 4+，macOS 默认 bash 3.2 会自动 skip。）
 
 ```bash
 # 从仓库根运行（注意：Python 3.9+ 需要 `tests.` 包前缀，相对 import 才能工作）
@@ -326,7 +328,7 @@ python3 -m unittest tests.test_task -v
 | 测试文件 | 测试数 | 覆盖范围 |
 |---|---|---|
 | `test_init.py` | 8 | 目录创建、校验、幂等、stray-file 路径恢复（第 12 轮 P3-2） |
-| `test_task.py` | 51 | create / start / finish / archive / cancel / list / delete，含路径穿越、CJK slug、连号保护、幂等重启、corrupted `task.json` 拒绝（F44-F53）、`--replace` 自动关闭旧任务及其边界（F49，P3-5a）、`--force` 绕过 corrupted 含指针清理断言（F63，P3-5b）、finish 终态分层报错含 archived 分支（P3-4，P3-H）、cancel 幂等清指针（第 10 轮 P3-A）、archive stray-file 恢复（第 11 轮 P3-3）、archive 月份目录预建保证原子 rename（第 13 轮 P3-1） |
+| `test_task.py` | 52 | create / start / finish / archive / cancel / list / delete，含路径穿越、CJK slug、连号保护、幂等重启、corrupted `task.json` 拒绝（F44-F53）、`--replace` 自动关闭旧任务及其边界（F49，P3-5a）、`--force` 绕过 corrupted 含指针清理断言（F63，P3-5b）、finish 终态分层报错含 archived 分支（P3-4，P3-H）、cancel 幂等清指针（第 10 轮 P3-A）、archive stray-file 恢复（第 11 轮 P3-3）、archive 月份目录预建保证原子 rename（第 13 轮 P3-1）、tasks/ 缺失友好报错（第 19 轮 P3-1） |
 | `test_session.py` | 10 | journal 追加、commit SHA 校验（合法/非法/多长度）、未初始化、日志轮转、非编号文件过滤、workspace 缺失自建（第 11 轮 P3-4，与 workspace-is-a-file 为同一模式 F44 后续） |
 | `test_context_specs_help.py` | 12 | repo-root 守卫(4) / context(4，含 corrupted 活跃任务 warning) / specs(2) / help(2，含描述列对齐护栏 P3-E) |
 | `test_install.py` | 15 | 默认 / claude / qoder+cline / 运行时路径清理 / uninstall 全部路径（含 O9/O11/O14/O16/O17） |
@@ -350,4 +352,4 @@ CI：`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上自动跑（推
 | `.trellis-lite/spec/` | 编码规范（AI 写代码前必读） |
 | `.trellis-lite/workspace/<dev>/journal-*.md` | 跨会话记忆 |
 | `lite/docs/design.md` | 设计原理与架构文档 |
-| `lite/tests/` | 165 个 unittest（回归保护） |
+| `lite/tests/` | 166 个 unittest（回归保护） |

@@ -39,7 +39,7 @@
   - slug 用 `kebab-case`（如 `user-login`）
   - CJK 标题可省略 `--slug`，自动用 md5 hash
 - [ ] **检查 `.current-task`** 是否指向新任务
-- [ ] **如有活跃任务时新建**：会有 Warning，先考虑 cancel
+- [ ] **如有活跃任务时新建**：会被拒绝（exit 1），先 finish/cancel 或用 `--replace` 显式接管
 
 ### 1.3 写 PRD
 

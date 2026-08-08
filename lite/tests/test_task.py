@@ -210,6 +210,19 @@ class TestTaskLifecycle(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("Invalid task name", r.stdout + r.stderr)
 
+    def test_start_reports_missing_tasks_dir_friendly(self) -> None:
+        """P3-1 (round 19): when tasks/ itself is missing, `task start` must
+        print a friendly, actionable message (pointing at doctor --fix) rather
+        than the raw FileNotFoundError("[Errno 2] ...") errno text."""
+        shutil.rmtree(self.h.tmpdir / ".trellis-lite/tasks")
+        r = self.h.run(["task", "start", "anything"])
+        self.assertNotEqual(r.returncode, 0)
+        out = r.stdout + r.stderr
+        # Friendly message, not raw errno text.
+        self.assertIn("tasks/ missing", out)
+        self.assertIn("doctor --fix", out)
+        self.assertNotIn("[Errno 2]", out)
+
     def test_start_already_in_progress_is_idempotent(self) -> None:
         """Re-starting an in_progress task must not warn about corruption."""
         self.h.run(["task", "create", "T", "--slug", "t"])

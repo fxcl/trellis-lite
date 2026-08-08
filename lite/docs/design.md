@@ -12,7 +12,7 @@
 
 | 原则 | 原版做法 | Lite 做法 | 动机 |
 |---|---|---|---|
-| **一个脚本搞定一切** | 28 个 Python 脚本分散在 `scripts/`, `task_store.py`, `task_context.py`... | 单文件 `trellis.py`（~1878 行） | 降低安装、维护、理解成本 |
+| **一个脚本搞定一切** | 28 个 Python 脚本分散在 `scripts/`, `task_store.py`, `task_context.py`... | 单文件 `trellis.py`（~1888 行） | 降低安装、维护、理解成本 |
 | **零外部依赖** | pnpm workspace + Node CLI + 多平台运行时 | 纯 Python 3.9+ 标准库 | 个人开发者不想装一堆依赖 |
 | **文件即数据库** | JSON 存任务 + JSONL 上下文清单 | JSON 存任务，Markdown 存日志 | 去掉中间层，AI 直接消费 |
 | **AI 直接消费** | AI 读 JSONL 上下文清单（`implement.jsonl`/`check.jsonl`，按任务圈定 spec/research 文件） | AI 直接读 PRD + spec 文件 | 去掉中间格式，减少信息损耗（代价：丢失按任务精准注入） |
@@ -95,7 +95,7 @@ AGENTS.md                         ← Qoder 入口（AI 读到的第一个文件
 
 ### 3.1 单文件设计（`trellis.py`）
 
-全部功能集中在一个 ~1878 行文件中，按功能分区：
+全部功能集中在一个 ~1888 行文件中，按功能分区：
 
 | 分区 | 行数 | 职责 |
 |---|---|---|
@@ -230,7 +230,7 @@ CI 在 `.github/workflows/test.yml` 自动跑，矩阵 Python 3.9–3.13，每�
 1. `py_compile` 字节码编译
 2. `install.sh` 烟测（默认 `--platforms all`）
 3. `uninstall.sh` 烟测（拒绝空目标 + 完整卸载）
-4. 跑全部 unittest（165 个）
+4. 跑全部 unittest（166 个）
 
 > **为何不用 `discover`**：Python 3.9+ 相对 import 需要 `tests.` 包前缀；`-s lite/tests -t .` 会因 package 不匹配而 `ModuleNotFoundError`。固定列出模块名更可重复。
 > **覆盖率说明**：为保证测试隔离，全部 `cmd_*` 测试用 `subprocess.run` 启动独立 Python 进程。coverage.py 默认无法跨进程跟踪，因此 CI 不输出百分比——测试数量与**行为覆盖**（每条 CLI 路径都有 ≥1 个断言）比百分数更重要。

@@ -211,9 +211,11 @@ def write_json(path: Path, data: dict) -> None:
     # ancestor) is transparently recovered, matching the philosophy used by
     # cmd_init / _task_archive / doctor --fix. Plain mkdir(parents=True,
     # exist_ok=True) would raise NotADirectoryError on Python 3.12+ in a
-    # half-initialised state where a parent path is a file. Existing callers
-    # (task.json write, .current-task write, .developer write) all pass
-    # well-formed parent directories, so this is a defensive depth change.
+    # half-initialised state where a parent path is a file. Callers (task.json
+    # write in set_status / _task_create) pass well-formed parent directories.
+    # .current-task / .developer are written via write_text, but their parent
+    # dirs are likewise pre-created by _safe_mkdir in cmd_init / doctor checks,
+    # so this is a defensive depth change.
     _safe_mkdir(path.parent)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -459,6 +461,14 @@ def resolve_task_dir(task_input: str) -> Path:
     candidate = tasks_dir / task_input
     if candidate.is_dir():
         return candidate
+    # P3-1 (round 19): if tasks/ itself is missing, iterdir() below raises a
+    # raw FileNotFoundError("[Errno 2] ...") that resolve_or_report would print
+    # verbatim. Raise a friendly, actionable message instead, consistent with
+    # _task_list's "No tasks directory." handling and the doctor --fix path.
+    if not tasks_dir.is_dir():
+        raise FileNotFoundError(
+            f"task not found: {task_input} (tasks/ missing — run 'doctor --fix')"
+        )
     # Try with date prefix: tasks/MM-DD-<input>
     # Literal endswith match (no glob semantics) so user input is matched exactly
     matches: list[Path] = []

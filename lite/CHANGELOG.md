@@ -240,6 +240,21 @@
 - **数字同步修正**：本轮文档更新中发现 best-practices.md L3 / L812 行数 1879 → 1878，余量 121 → 122（之前 §17 写入时 wc -l 误读 1 行；实际 1878 行）。
 - 文档变更范围：best-practices.md 943 → 943 行（仅 2 处数字修正，行数不变）；CHANGELOG.md 323 → 332 行（+9 行新增 entry）；trellis.py 1878 → 1878 行（无代码逻辑变更）。
 
+### 改进（第 19 轮 oracle-reviewer）
+
+第 19 轮审查（聚焦正确性 + 连贯性）0 P1 / **1 P2** / 6 P3。连续 9 轮（10-18）0 P1 后**首次重新发现 P2**——文档层回归：第 14 轮 P3-2 文档同步时在 exit-codes.md + best-practices.md 错误描述 `task delete --force` 为"仍预检 corrupted"，潜伏 5 轮。代码与测试一致：`task delete --force` 跳过 corrupted 预检直接 rmtree（exit 0），是显式的安全语义。
+
+本轮修复 1 P2 + 6 P3 + 3 backlog（共 10 项），其中：
+- **P2-1**：exit-codes.md:41 改"仍预检 corrupted"为"显式跳过 corrupted 预检 + 直接 rmtree（exit 0）"；best-practices.md:408 §7.1 表格对齐，注脚说明与代码 1:1；CHANGELOG 第 9 轮 F63 条目保持原状（一直是事实正确）。
+- **P3-1**：`resolve_task_dir` 在 `tasks/` 缺失时返回 `None` 并打 `trellis: tasks/ missing ...` 红字错误 + exit 1（修复"指向缺失任务目录"错误信息误导）；新增 `test_task.py::test_resolve_task_dir_handles_missing_tasks_dir` 锁回归。
+- **P3-2**：workflow-checklist.md §3 新建子目录措辞改为硬拒绝（"`trellis` 不会在 `tasks/` 缺失时自动 mkdir"）。
+- **P3-3**：best-practices.md §7.1 时间戳表 `cancelled`/`finished` 措辞统一为"自动保留 30 天后清理"。
+- **P3-4**：exit-codes.md `cmd_context` 合规表措辞与设计意图对齐。
+- **P3-5**：usage-guide.md §8 delete 教程语义对齐：`--force` 章节明确说明"绕过 corrupted 预检" + 修复建议增加 `doctor` 优先。
+- **§17.1 backlog**：4 处锚点修正（行号→符号名 + "7 类"→"5 状态+9 转移" + "9 项全部"→"5 项有 fix" + "5 修复点"→"6 修复点+write_json"）。
+- **write_json 注释 narrative**：3 调用点→2 调用点（task.json 走 `write_json`，`.current-task`/`.developer` 走 `write_text`）。
+- 测试总数 165 → **166**（+1 P3-1 回归测试）；trellis.py 1878 → **1888** 行（净 +10）；best-practices.md 943 → **943** 行（净增补 0；§17.3 grep 行补 ~1888）。
+
 ---
 
 ## [0.6.9] - 2026-07-26
