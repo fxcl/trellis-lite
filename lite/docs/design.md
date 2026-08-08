@@ -1,6 +1,6 @@
 # Trellis Lite — 设计原理与实现
 
-> 配套文档：[README.md](../README.md) · [usage-guide.md](usage-guide.md) · [best-practices.md](best-practices.md)
+> 配套文档：[README.md](../README.md) · [usage-guide.md](usage-guide.md) · [best-practices.md](best-practices.md) · [platforms.md](platforms.md)
 
 ## 一、设计原理
 

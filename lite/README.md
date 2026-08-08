@@ -2,7 +2,7 @@
 
 **Trellis 的精简版** — 为敏捷个人开发者打造的 AI 编码工作流框架。
 
-📘 进阶阅读：[使用指南](docs/usage-guide.md) · [最佳实践](docs/best-practices.md) · [任务 checklist](docs/workflow-checklist.md) · [设计原理](docs/design.md)
+📘 进阶阅读：[使用指南](docs/usage-guide.md) · [最佳实践](docs/best-practices.md) · [任务 checklist](docs/workflow-checklist.md) · [设计原理](docs/design.md) · [平台支持](docs/platforms.md)
 
 ## 为什么是 Lite？
 
