@@ -7,7 +7,7 @@
 | 维度 | 评分 | 评语 |
 |------|------|------|
 | 流程设计完整性 | A+ | 3 阶段（PLAN→CODE→WRAP）清晰、自洽、无冗余 |
-| 工程实现质量 | A+ | 1889 行单文件、零依赖、~166 个 unittest、19 轮审查加固 |
+| 工程实现质量 | A+ | 2130 行单文件、零依赖、~191 个 unittest、19 轮审查加固 |
 | 文档完备性 | A+ | 设计文档、最佳实践、checklist、CLI 手册、架构审查记录齐全 |
 | 可执行性（AI 遵守度） | B | 流程依赖 AI 自律，存在"跳过 WRAP"的实际证据 |
 | 健壮性/防御性 | A+ | 状态机强制、路径穿越防护、损坏恢复、幂等设计 |
@@ -41,7 +41,7 @@ planning ──(task start)──→ in_progress ──(task finish)──→ do
 
 ### 2.3 测试覆盖
 
-~166 个 unittest 覆盖每条 CLI 路径：状态机锁定、任务全生命周期、doctor 自检、
+~191 个 unittest 覆盖每条 CLI 路径：状态机锁定、任务全生命周期、doctor 自检、
 session 轮转、安装幂等性、slugify fuzz（1000 随机 Unicode）、Usage 一致性。
 测试哲学："行为覆盖 > 覆盖率百分比"（subprocess 隔离导致 coverage.py 无法跨进程跟踪）。
 
@@ -63,13 +63,13 @@ task archive 不检查 journal 记录，context 不提醒"上一任务未完整�
 
 10 份文档覆盖 AI 入口（AGENTS.md/CLAUDE.md）、流程定义（workflow.md）、
 行为指导（skills/×4）、开发者文档（docs/×8）。文档与实现高度一致。
-轻微不一致：design.md 说 165 个测试，best-practices.md 说 166 个。
+轻微不一致（已修复）：原 design.md 说 165 个测试 vs best-practices.md 说 166 个，现已统一为 191 个。
 
 ## 五、与原版 Trellis 对比
 
 | 维度 | 原版 | Lite | 评估 |
 |------|------|------|------|
-| 脚本数量 | 28 个 | 1 个（1889 行） | ✅ 极简 |
+| 脚本数量 | 28 个 | 1 个（2130 行） | ✅ 极简 |
 | 外部依赖 | pnpm + Node | 纯 Python 标准库 | ✅ 零依赖 |
 | 工作流 | 4 阶段 | 3 阶段 | ✅ 去冗余 |
 | 上下文注入 | JSONL 清单 | AI 直接读 markdown | ⚠️ 能力降级但合理 |

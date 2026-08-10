@@ -6,10 +6,10 @@
 # (or copy, if symlinks aren't allowed)
 #
 # What it checks (each is optional and skippable):
-#   1. .trellis-lite/ is initialized
-#   2. doctor reports no problems (use --no-verify to skip when broken)
-#   3. No active task in `planning` state (warn only)
-#   4. Last done task has a complete WRAP phase (warn only)
+#   0. .trellis-lite/ is initialized (silent skip if not found)
+#   1. doctor reports no problems (use --no-verify to skip when broken)
+#   2. No active task in `planning` state (warn only)
+#   3. Last done task has a complete WRAP phase (warn only)
 #
 # To bypass the hook entirely (e.g. urgent hotfix):
 #   git commit --no-verify

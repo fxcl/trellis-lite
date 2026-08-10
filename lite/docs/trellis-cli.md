@@ -2,7 +2,7 @@
 
 > 配套文档：[README.md](../README.md) · [installation-guide.md](installation-guide.md) · [usage-guide.md](usage-guide.md) · [best-practices.md](best-practices.md) · [platforms.md](platforms.md) · [design.md](design.md) · [exit-codes.md](exit-codes.md)
 
-> trellis.py 是 Trellis Lite 的**唯一可执行文件**（~1888 行，纯 Python 标准库，零外部依赖）。
+> trellis.py 是 Trellis Lite 的**唯一可执行文件**（~2130 行，纯 Python 标准库，零外部依赖）。
 > 本文档是完整的命令参考 + 场景化使用流程。
 
 ---
@@ -24,7 +24,7 @@ python3 .trellis-lite/scripts/trellis.py -h
 trellis.py
 ├── init <name>          # 初始化开发者身份（唯一能在无 .trellis-lite 时运行的命令）
 ├── task                 # 任务管理（8 个子命令）
-│   ├── create "<title>" [--slug <s>] [--replace]
+│   ├── create "<title>" [--slug <s>] [--replace] [--template bug|feature|refactor]
 │   ├── start <name>
 │   ├── current
 │   ├── finish
@@ -35,7 +35,7 @@ trellis.py
 ├── session --title "T" --summary "S" [--commit <hash>]
 ├── context              # AI 跨会话恢复入口（输出完整上下文）
 ├── specs                # 列出 spec 文件
-├── doctor [--fix]       # 9 项健康检查 + 自愈
+├── doctor [--fix]       # 10 项健康检查 + 自愈
 ├── version              # 版本号
 └── help / -h / --help   # 帮助
 ```
@@ -78,12 +78,12 @@ Usage: trellis.py init <your-name>
 
 ### 2. 任务管理
 
-#### `task create "<title>" [--slug <name>] [--replace]`
+#### `task create "<title>" [--slug <name>] [--replace] [--template bug|feature|refactor]`
 
 创建新任务目录 + prd.md 模板，并自动设为当前任务。
 
 ```
-Usage: trellis.py task create "<title>" [--slug <name>] [--replace]
+Usage: trellis.py task create "<title>" [--slug <name>] [--replace] [--template bug|feature|refactor]
 ```
 
 | 参数 | 说明 |
@@ -91,6 +91,7 @@ Usage: trellis.py task create "<title>" [--slug <name>] [--replace]
 | `"<title>"` | 任务标题（可含空格；自动剥离一对匹配的引号） |
 | `--slug <name>` | 自定义目录名（默认由 title 自动生成） |
 | `--replace` | 显式接管已有活跃任务（旧任务自动置为 done） |
+| `--template` | 预填充 prd.md 模板：`bug`（复现 + 根因假设 + 回归测试）、`feature`（需求 + 验收标准）、`refactor`（范围 + 行为不变保证）。省略则用默认骨架 |
 
 **Slug 生成规则**：
 - ASCII 标题 → `kebab-case`（如 "User Login API" → `user-login-api`）
@@ -414,13 +415,13 @@ Available Specs:
 
 #### `doctor [--fix]`
 
-9 项健康检查 + `--fix` 自动修复。**项目状态不正常时第一个该跑的命令**。
+10 项健康检查 + `--fix` 自动修复。**项目状态不正常时第一个该跑的命令**。
 
 ```
 Usage: trellis.py doctor [--fix]
 ```
 
-**9 项检查清单**：
+**10 项检查清单**：
 
 | # | 检查项 | 严重度 | --fix 可修 |
 |---|---|---|---|
@@ -433,6 +434,7 @@ Usage: trellis.py doctor [--fix]
 | 7 | journal 编号从 1 开始、无 gap | Warning | — |
 | 8 | Python ≥ 3.9 | Problem | — |
 | 9 | 脏文件计数 | 仅提示 | — |
+| 10 | done 任务的 WRAP 完整性（验收标准全勾 + session 已记录 + spec 已提交） | Warning | — |
 
 **退出码**：
 - 有 Problem → exit 1（`✗ Found N problem(s):`）

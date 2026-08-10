@@ -114,7 +114,7 @@ ls -la AGENTS.md CLAUDE.md .clinerules/trellis-lite.md 2>/dev/null
 ls -la .trellis-lite/
 ```
 
-运行 doctor 自检（9 项健康检查）：
+运行 doctor 自检（10 项健康检查）：
 
 ```bash
 python3 .trellis-lite/scripts/trellis.py doctor

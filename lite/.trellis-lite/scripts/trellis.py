@@ -452,8 +452,10 @@ def _count_unchecked_criteria(task_dir: Path) -> int:
         return 0
 
 
-def _wrap_completeness_warnings(task_dir: Path) -> list[str]:
-    """Read-only WRAP-phase checks for a task. Returns warnings (may be empty).
+def _wrap_completeness_warnings() -> list[str]:
+    """Read-only global WRAP-phase checks. Returns warnings (may be empty).
+
+    These are project-wide checks (not tied to a specific task_dir):
 
     Checks (all silent-degrade to empty on error):
       (a) journal has at least one session entry (not just the '# Journal N' header)
@@ -510,7 +512,7 @@ def _task_health(task_dir: Path, *, verbose: bool = False) -> list[str]:
             issues.append(f"prd.md has {unchecked} unchecked acceptance criteria")
         else:
             issues.append(f"prd {unchecked} unchecked")
-    issues.extend(_wrap_completeness_warnings(task_dir))
+    issues.extend(_wrap_completeness_warnings())
     return issues
 
 
@@ -1107,7 +1109,7 @@ def _task_archive(args: list[str]) -> int:
     # WRAP-phase completeness hints (non-blocking): surface unfinished WRAP
     # work so the user can decide to fix it before the task disappears into
     # archive/. Read-only; any check failure degrades to silence.
-    for w in _wrap_completeness_warnings(task_dir):
+    for w in _wrap_completeness_warnings():
         print(colored(f"Warning (WRAP incomplete): {w}", C_YELLOW))
 
     # Move to archive
@@ -2060,6 +2062,7 @@ def _check_wrap_completeness(tdir: Path, warnings: list[str]) -> None:
     if not tasks_dir.is_dir():
         return
     found = 0
+    seen: set[str] = set()  # dedup global warnings (session/spec) across tasks
     for t in sorted(tasks_dir.iterdir()):
         if not t.is_dir() or t.name == DIR_ARCHIVE:
             continue
@@ -2067,6 +2070,9 @@ def _check_wrap_completeness(tdir: Path, warnings: list[str]) -> None:
         if data.get("status") != "done":
             continue
         for issue in _task_health(t, verbose=True):
+            if issue in seen:
+                continue
+            seen.add(issue)
             warnings.append(f"task {t.name}: {issue}")
             found += 1
     if found == 0:

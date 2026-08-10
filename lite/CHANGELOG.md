@@ -255,6 +255,31 @@
 - **write_json 注释 narrative**：3 调用点→2 调用点（task.json 走 `write_json`，`.current-task`/`.developer` 走 `write_text`）。
 - 测试总数 165 → **166**（+1 P3-1 回归测试）；trellis.py 1878 → **1888** 行（净 +10）；best-practices.md 943 → **943** 行（净增补 0；§17.3 grep 行补 ~1888）。
 
+### 新功能（WRAP 完整性 + 任务模板）
+
+- **WRAP 阶段完整性检查（跨命令）**：`task finish` / `task archive` 现在非阻塞地提示未完成的 WRAP 工作（未勾选验收标准、未记录 session、未提交 spec）；`task list` 为 done 任务显示 ✓/⚠ 健康标记；`context` 展示最近 done 任务的 WRAP 状态；`doctor` 新增第 10 项检查（done 任务的 WRAP 完整性）。
+- **`task create --template bug|feature|refactor`**：三种预填充 prd.md 模板。`bug`（复现 + 根因假设 + 回归测试）、`feature`（需求 + 验收标准）、`refactor`（范围 + 行为不变保证）。省略则用默认骨架。
+- **归档任务健康标记**：`task list --all` 现在为已归档任务计算真实健康标记（✓/⚠），而不是硬编码绿色勾——归档不可逆，但信号保持诚实。
+- **session 悬空指针保护**：当 `.current-task` 指向已删除的任务目录时，`session` 命令不再注入悬空的 Task 链接或将标题退化为裸目录名。
+- **pre-commit hook WRAP 检查**：hook 新增非阻塞警告——如果最近 done 任务的 WRAP 阶段不完整（未勾选标准 / 未记录 session），commit 时提醒闭环。
+
+### 改进（第 20 轮 oracle-reviewer 后续）
+
+- **`_wrap_completeness_warnings` 去除 dead parameter**：参数 `task_dir` 从未被函数体使用（函数检查全局 `get_workspace_dir()` + `git_status_porcelain()`），导致 doctor 遍历多个 done tasks 时重复报告全局警告。修复：函数改为无参数，doctor 添加 `seen` set 去重。
+- **pre-commit hook 注释编号对齐**：头部注释的检查编号与内联 `Check N` 编号不一致（header 从 1 开始含 .trellis-lite 初始化，inline 从 1 开始是 doctor），统一为 0（初始化静默跳过）+ 1-3（doctor / planning / WRAP）。
+
+### 文档（全量数字同步）
+
+- 行数 1888 → **2130**（8 处：README.md / trellis-cli.md / best-practices.md / design.md ×2 / plans/ ×2）。
+- 测试数 166 → **191**（7 处：README.md / best-practices.md / usage-guide.md ×2 / design.md / plans/ ×2）。
+- doctor 检查数 9 → **10** 项（4 处：trellis-cli.md ×2 / installation-guide.md / design.md / usage-guide.md）。
+- §17.6 拆分阈值更新：1700 / 1900 → **2000 / 2300**（与当前 2130 行 + 2026 实际增长率匹配）。
+- §17.3 grep 模板同步：补 `~2129` / `~2130` / `190 个` / `191 个`。
+- trellis-cli.md 补 `--template bug|feature|refactor` 命令参考（命令总览 + 参数表 + 使用说明）。
+- trellis-cli.md doctor 检查清单补第 10 项（WRAP 完整性）。
+- usage-guide.md 测试表格更新各模块测试数（test_task 52→67 / test_session 10→14 / test_context_specs_help 12→14 / test_doctor 24→26 / test_precommit 4→6）。
+- plans/trellis-lite-process-quality-review.md 修复内部测试数矛盾（design.md 165 vs best-practices.md 166 → 统一为 191）。
+
 ---
 
 ## [0.6.9] - 2026-07-26

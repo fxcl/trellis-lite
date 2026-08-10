@@ -1,6 +1,6 @@
 # Trellis Lite — 最佳实践指南
 
-> 基于 19 轮 oracle-reviewer 审查沉淀 + ~1888 行实现 + 166 个 unittest 覆盖的实战经验。
+> 基于 19 轮 oracle-reviewer 审查沉淀 + ~2130 行实现 + 191 个 unittest 覆盖的实战经验。
 >
 > 配套文档：
 > - [README.md](../README.md) — 快速上手
@@ -812,7 +812,7 @@ AI 路径：
 - **mutating helper 走 `_safe_mkdir`（统一防御深度）**：任何 `mkdir(parents=True, exist_ok=True)` 调用都应考虑换代，除非是有意保留的两处（`rotate_if_full` 静默恢复 vs 用户可见错误，`_task_create` 显式重名 vs 静默覆盖同名数据）
 - **doctor 检查项用 idx 模式 pop**：`idx = len(list) - 1` 后 `list.pop(idx)`，防御未来插入新检查项时 pop 移除错误条目
 - **CHANGELOG `[Unreleased]` 锚点日期与标题日期一致**：GitHub markdown 锚点由标题生成，错位会导致跳转失效
-- **1700 行后主动审视单文件架构**：当前 1888 / 2000（94%，余量 112），到达 1900 前考虑抽出 helper 模块而非硬扩
+- **2000 行后主动审视单文件架构**：当前 2130 / 2300（93%，余量 170），到达 2300 前考虑抽出 helper 模块而非硬扩
 
 ### ❌ DON'T
 
@@ -826,7 +826,7 @@ AI 路径：
 - **不要期待 `install.sh` 重装会覆盖任何东西**（见第一节“重装语义”）
 - **不要手动改 task.json**（会被 `doctor` 报 Warning，且会绕开 set_status 守门）
 - **不要把 `task list` / `task current` 当 CI 闸门**（它们空状态返 0）
-- **不要为每轮审查都跑全量 165 测试——只跑受影响的模块**（例如修改 `_task_archive` 后只跑 `test_task`；修改 `_check_*` 后只跑 `test_doctor`）
+- **不要为每轮审查都跑全量 191 测试——只跑受影响的模块**（例如修改 `_task_archive` 后只跑 `test_task`；修改 `_check_*` 后只跑 `test_doctor`）
 - **不要在没有跨调用者追踪前宣称“深度收敛”**：代码表面 0 P1 但 helper 边角不一致（如 raw mkdir 三处）会被下轮 oracle 抓出
 
 ---
@@ -872,7 +872,7 @@ wc -l lite/.trellis-lite/scripts/trellis.py
 cd lite && python3 -m unittest tests.test_* 2>&1 | grep "Ran"
 
 # 2. grep 所有需要同步的位置
-grep -rn "~1878\|~1879\|~1888\|165 个\|166 个\|164 个\|163 个" lite/README.md lite/docs/
+grep -rn "~1878\|~1879\|~1888\|~2129\|~2130\|165 个\|166 个\|190 个\|191 个" lite/README.md lite/docs/
 
 # 3. 一次性 SearchReplace 同步全部位置
 ```
@@ -924,7 +924,7 @@ grep -n "problems.pop\|warnings.pop" lite/.trellis-lite/scripts/trellis.py
 | 进化阶段 | 连续 3-5 轮 0 P1，但 P2 仍偶尔出现 |
 | **收敛阶段** | 连续 5+ 轮 0 P1 + 连续 3+ 轮 0 P2，点状 P3（可跳过） |
 | **深度收敛** | 连续 8+ 轮 0 P1 + 连续 4+ 轮 0 P2 + 某轮 0 P3（全部 5 维度 0 发现） |
-| 合并 / 拆分阈值 | 1700 行后主动审视，1900 行前拆分出 helper 模块 |
+| 合并 / 拆分阈值 | 2000 行后主动审视，2300 行前拆分出 helper 模块 |
 
 当前 trellis-lite 处于**深度收敛**阶段（连续 8 轮 0 P1 / 6 轮 0 P2 / 2 轮 0 P3）。
 
