@@ -123,6 +123,43 @@ class TestInstall(unittest.TestCase):
         # And install should have surfaced a note about the skip.
         self.assertIn(".developer already set", r2.stdout)
 
+    # ---- Docs/ deployment (reference material for agents and users) -----
+
+    def test_install_deploys_docs(self) -> None:
+        """Install must copy docs/ into the target with the uninstall marker."""
+        r = self._run_install("tester")
+        self.assertEqual(r.returncode, 0, f"install failed: {r.stdout}\n{r.stderr}")
+        self.assertTrue((self.tmpdir / "docs").is_dir(), "docs/ must be created")
+        # Marker file so uninstall can distinguish Trellis docs from a
+        # pre-existing user docs/ dir.
+        self.assertTrue(
+            (self.tmpdir / "docs" / ".trellis-docs").is_file(),
+            ".trellis-docs marker must be present",
+        )
+        # Sanity: at least one known doc shipped
+        self.assertTrue(
+            (self.tmpdir / "docs" / "best-practices.md").is_file(),
+            "best-practices.md must ship in docs/",
+        )
+
+    def test_install_skips_existing_docs(self) -> None:
+        """A pre-existing user docs/ dir must be preserved, not clobbered."""
+        # Seed a user docs/ before install
+        user_docs = self.tmpdir / "docs"
+        user_docs.mkdir()
+        keeper = user_docs / "my-notes.md"
+        keeper.write_text("# My own docs\n")
+
+        r = self._run_install("tester")
+        self.assertEqual(r.returncode, 0, f"install failed: {r.stdout}\n{r.stderr}")
+        self.assertIn("already exists", r.stdout)
+        # User's file must survive untouched (no marker written by install)
+        self.assertTrue(keeper.exists(), "user's docs/ content must be preserved")
+        self.assertFalse(
+            (user_docs / ".trellis-docs").exists(),
+            "install must not write the marker into a pre-existing user docs/",
+        )
+
 
 class TestUninstall(unittest.TestCase):
     def setUp(self) -> None:
@@ -285,6 +322,39 @@ class TestUninstall(unittest.TestCase):
         # User's hook must survive (uninstall only removes hooks containing "Trellis Lite")
         self.assertTrue(hook.exists(), "user's pre-commit hook must not be removed")
         self.assertNotIn("Trellis Lite", hook.read_text())
+
+    # ---- Docs/ removal (marker-gated) ------
+
+    def test_uninstall_removes_docs(self) -> None:
+        """Uninstall must remove docs/ that install.sh deployed (marker present)."""
+        self._install_all()
+        docs = self.tmpdir / "docs"
+        self.assertTrue(docs.is_dir(), "docs/ should exist post-install")
+        self.assertTrue((docs / ".trellis-docs").is_file(), "marker should exist post-install")
+
+        r = self._run_uninstall(str(self.tmpdir))
+        self.assertEqual(r.returncode, 0, f"uninstall failed: {r.stdout}\n{r.stderr}")
+        self.assertFalse(docs.exists(), "deployed docs/ must be removed on uninstall")
+
+    def test_uninstall_keeps_user_docs(self) -> None:
+        """Uninstall must NOT remove a pre-existing user docs/ (no marker)."""
+        # Seed a user docs/ with no marker BEFORE install (install then skips it)
+        user_docs = self.tmpdir / "docs"
+        user_docs.mkdir()
+        keeper = user_docs / "my-notes.md"
+        keeper.write_text("# My own docs\n")
+
+        self._install_all()  # install skips docs/ (already exists)
+        self.assertFalse(
+            (user_docs / ".trellis-docs").exists(),
+            "install must not write marker into pre-existing user docs/",
+        )
+
+        r = self._run_uninstall(str(self.tmpdir))
+        self.assertEqual(r.returncode, 0, f"uninstall failed: {r.stdout}\n{r.stderr}")
+        # User docs/ must survive — no marker means uninstall must not touch it
+        self.assertTrue(user_docs.is_dir(), "user docs/ must not be removed")
+        self.assertTrue(keeper.exists(), "user docs/ content must be preserved")
 
     # ---- O11 coverage: user-edited .gitignore block -------------------
 

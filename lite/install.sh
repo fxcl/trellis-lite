@@ -9,9 +9,9 @@
 #   ./install.sh [target-dir] [developer-name] [--platforms <list>]
 #
 # Platforms (default: all):
-#   qoder       → AGENTS.md
-#   claude      → CLAUDE.md
-#   opencode    → AGENTS.md (shared with qoder)
+#   qoder       → AGENTS.md + .qoder/agents/ (trellis-implement, trellis-check, trellis-brainstorm)
+#   claude      → CLAUDE.md + .claude/commands/trellis/ (9 slash commands: context, new, start, check, finish, archive, doctor, cancel, list)
+#   opencode    → AGENTS.md (shared with qoder) + .opencode/agents/ + .opencode/commands/ (9 commands)
 #   cline       → .clinerules/trellis-lite.md
 #   all         → all of the above (default)
 #
@@ -180,6 +180,30 @@ else
     rm -rf "${DST_TRELLIS}/scripts/__pycache__"
 fi
 
+# --- 1b. Copy docs/ (reference material for agents and users) ---
+#
+# Agents read these (best-practices, workflow-checklist, architecture-review,
+# etc.) when following References links in templates and workflow.md. Without
+# this copy those links 404 in the installed project. Idempotent: skip if the
+# user already has a docs/ dir (may have their own documentation).
+
+SRC_DOCS="${SCRIPT_DIR}/docs"
+DST_DOCS="${TARGET_DIR}/docs"
+
+if [ -d "$SRC_DOCS" ]; then
+    if [ -d "$DST_DOCS" ]; then
+        echo -e "${YELLOW}⚠  docs/ already exists in target. Skipping (merge manually if needed).${NC}"
+    else
+        echo -e "${GREEN}→ Copying docs/ ...${NC}"
+        cp -r "$SRC_DOCS" "$DST_DOCS"
+        # Marker so uninstall can distinguish Trellis docs from a pre-existing
+        # user docs/ dir (which install skips and uninstall must not touch).
+        echo "Installed by Trellis Lite. Safe to remove on uninstall." \
+            > "${DST_DOCS}/.trellis-docs"
+        INSTALLED_FILES+=("$DST_DOCS")
+    fi
+fi
+
 echo ""
 
 # --- 2. Install platform entry files ---
@@ -244,6 +268,85 @@ if has_platform "cline"; then
         INSTALLED_FILES+=("$DST_CLINE_RULE")
     fi
     INSTALLED_PLATFORMS+=("Cline")
+fi
+
+# Qoder → .qoder/agents/ (Trellis sub-agents)
+if has_platform "qoder"; then
+    SRC_QODER_AGENTS="${SCRIPT_DIR}/templates/qoder/agents"
+    DST_QODER_AGENTS="${TARGET_DIR}/.qoder/agents"
+
+    if [ -d "$SRC_QODER_AGENTS" ]; then
+        mkdir -p "$DST_QODER_AGENTS"
+        for f in "$SRC_QODER_AGENTS"/*.md; do
+            [ -f "$f" ] || continue
+            DST_FILE="$DST_QODER_AGENTS/$(basename "$f")"
+            if [ -f "$DST_FILE" ]; then
+                echo -e "${YELLOW}⚠  .qoder/agents/$(basename "$f") already exists. Skipping.${NC}"
+            else
+                cp "$f" "$DST_FILE"
+                INSTALLED_FILES+=("$DST_FILE")
+            fi
+        done
+    fi
+fi
+
+# OpenCode → .opencode/agents/ + .opencode/commands/
+if has_platform "opencode"; then
+    # Agents
+    SRC_OPENCODE_AGENTS="${SCRIPT_DIR}/templates/opencode/agents"
+    DST_OPENCODE_AGENTS="${TARGET_DIR}/.opencode/agents"
+
+    if [ -d "$SRC_OPENCODE_AGENTS" ]; then
+        mkdir -p "$DST_OPENCODE_AGENTS"
+        for f in "$SRC_OPENCODE_AGENTS"/*.md; do
+            [ -f "$f" ] || continue
+            DST_FILE="$DST_OPENCODE_AGENTS/$(basename "$f")"
+            if [ -f "$DST_FILE" ]; then
+                echo -e "${YELLOW}⚠  .opencode/agents/$(basename "$f") already exists. Skipping.${NC}"
+            else
+                cp "$f" "$DST_FILE"
+                INSTALLED_FILES+=("$DST_FILE")
+            fi
+        done
+    fi
+
+    # Commands
+    SRC_OPENCODE_COMMANDS="${SCRIPT_DIR}/templates/opencode/commands"
+    DST_OPENCODE_COMMANDS="${TARGET_DIR}/.opencode/commands"
+
+    if [ -d "$SRC_OPENCODE_COMMANDS" ]; then
+        mkdir -p "$DST_OPENCODE_COMMANDS"
+        for f in "$SRC_OPENCODE_COMMANDS"/*.md; do
+            [ -f "$f" ] || continue
+            DST_FILE="$DST_OPENCODE_COMMANDS/$(basename "$f")"
+            if [ -f "$DST_FILE" ]; then
+                echo -e "${YELLOW}⚠  .opencode/commands/$(basename "$f") already exists. Skipping.${NC}"
+            else
+                cp "$f" "$DST_FILE"
+                INSTALLED_FILES+=("$DST_FILE")
+            fi
+        done
+    fi
+fi
+
+# Claude Code → .claude/commands/trellis/ (slash commands)
+if has_platform "claude"; then
+    SRC_CLAUDE_COMMANDS="${SCRIPT_DIR}/templates/claude/commands/trellis"
+    DST_CLAUDE_COMMANDS="${TARGET_DIR}/.claude/commands/trellis"
+
+    if [ -d "$SRC_CLAUDE_COMMANDS" ]; then
+        mkdir -p "$DST_CLAUDE_COMMANDS"
+        for f in "$SRC_CLAUDE_COMMANDS"/*.md; do
+            [ -f "$f" ] || continue
+            DST_FILE="$DST_CLAUDE_COMMANDS/$(basename "$f")"
+            if [ -f "$DST_FILE" ]; then
+                echo -e "${YELLOW}⚠  .claude/commands/trellis/$(basename "$f") already exists. Skipping.${NC}"
+            else
+                cp "$f" "$DST_FILE"
+                INSTALLED_FILES+=("$DST_FILE")
+            fi
+        done
+    fi
 fi
 
 echo ""

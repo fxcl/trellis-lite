@@ -17,9 +17,13 @@ fi
 if [ ! -d "$TARGET/.trellis-lite" ] \
     && [ ! -f "$TARGET/AGENTS.md" ] \
     && [ ! -f "$TARGET/CLAUDE.md" ] \
-    && [ ! -d "$TARGET/.clinerules" ]; then
+    && [ ! -d "$TARGET/.clinerules" ] \
+    && [ ! -d "$TARGET/.qoder/agents" ] \
+    && [ ! -d "$TARGET/.opencode" ] \
+    && [ ! -d "$TARGET/.claude/commands/trellis" ] \
+    && [ ! -d "$TARGET/docs" ]; then
     echo "Error: '$TARGET' does not appear to have Trellis Lite installed" >&2
-    echo "  (no .trellis-lite/, AGENTS.md, CLAUDE.md, or .clinerules/ found)" >&2
+    echo "  (no .trellis-lite/, AGENTS.md, CLAUDE.md, .clinerules/, .qoder/agents/, .opencode/, .claude/commands/trellis/, or docs/ found)" >&2
     exit 1
 fi
 
@@ -31,6 +35,14 @@ removed=0
 if [ -d "$TARGET/.trellis-lite" ]; then
     rm -rf "$TARGET/.trellis-lite"
     echo "  ✓ .trellis-lite/"
+    removed=$((removed + 1))
+fi
+
+# Docs (Trellis reference material) — only if installed by us (marker present).
+# A pre-existing user docs/ dir was skipped by install; don't touch it.
+if [ -f "$TARGET/docs/.trellis-docs" ]; then
+    rm -rf "$TARGET/docs"
+    echo "  ✓ docs/"
     removed=$((removed + 1))
 fi
 
@@ -52,6 +64,48 @@ if [ -f "$TARGET/.clinerules/trellis-lite.md" ]; then
     if [ -d "$TARGET/.clinerules" ] && [ -z "$(ls -A "$TARGET/.clinerules")" ]; then
         rmdir "$TARGET/.clinerules"
         echo "  ✓ .clinerules/ (empty, removed)"
+    fi
+fi
+
+# Qoder agents — remove the agents dir entirely (Trellis-managed)
+if [ -d "$TARGET/.qoder/agents" ]; then
+    rm -rf "$TARGET/.qoder/agents"
+    echo "  ✓ .qoder/agents/"
+    removed=$((removed + 1))
+    # Remove .qoder/ only if empty
+    if [ -d "$TARGET/.qoder" ] && [ -z "$(ls -A "$TARGET/.qoder")" ]; then
+        rmdir "$TARGET/.qoder"
+        echo "  ✓ .qoder/ (empty, removed)"
+    fi
+fi
+
+# OpenCode agents + commands — remove Trellis-managed subdirs
+for opencode_sub in agents commands; do
+    if [ -d "$TARGET/.opencode/$opencode_sub" ]; then
+        rm -rf "$TARGET/.opencode/$opencode_sub"
+        echo "  ✓ .opencode/$opencode_sub/"
+        removed=$((removed + 1))
+    fi
+done
+# Remove .opencode/ only if empty
+if [ -d "$TARGET/.opencode" ] && [ -z "$(ls -A "$TARGET/.opencode")" ]; then
+    rmdir "$TARGET/.opencode"
+    echo "  ✓ .opencode/ (empty, removed)"
+fi
+
+# Claude Code trellis commands — remove the trellis/ subdir
+if [ -d "$TARGET/.claude/commands/trellis" ]; then
+    rm -rf "$TARGET/.claude/commands/trellis"
+    echo "  ✓ .claude/commands/trellis/"
+    removed=$((removed + 1))
+    # Remove .claude/commands/ and .claude/ only if empty
+    if [ -d "$TARGET/.claude/commands" ] && [ -z "$(ls -A "$TARGET/.claude/commands")" ]; then
+        rmdir "$TARGET/.claude/commands"
+        echo "  ✓ .claude/commands/ (empty, removed)"
+        if [ -d "$TARGET/.claude" ] && [ -z "$(ls -A "$TARGET/.claude")" ]; then
+            rmdir "$TARGET/.claude"
+            echo "  ✓ .claude/ (empty, removed)"
+        fi
     fi
 fi
 

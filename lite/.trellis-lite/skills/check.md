@@ -61,13 +61,3 @@ npm run lint && npm run typecheck && npm test
 - TypeCheck: pass/fail
 - Tests: pass/fail
 ```
-
-## Sub-Agent Mode
-
-When dispatched as a `CodeReview` agent:
-- Start with `Active task: <path>`
-- Read `prd.md` and specs
-- Review `git diff`
-- Self-fix mechanical issues
-- Report findings
-- Do NOT commit

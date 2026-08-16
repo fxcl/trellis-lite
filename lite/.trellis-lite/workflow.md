@@ -221,3 +221,21 @@ python3 .trellis-lite/scripts/trellis.py session --title "Title" --summary "Summ
 4. One active task at a time — finish before starting the next
 5. Journal entries are cheap — record every meaningful session
 6. **No parallel trellis commands** — `.current-task` is an unsynchronized file pointer. Run commands sequentially; running multiple instances in parallel can corrupt the active pointer.
+
+---
+
+## Further Reading
+
+These docs expand on the workflow above. Agents should read the ones relevant to their phase.
+
+| Doc | What it covers |
+|-----|----------------|
+| [best-practices.md](docs/best-practices.md) | PRD quality, spec writing, state machine, exit codes, doctor semantics, install lifecycle |
+| [workflow-checklist.md](docs/workflow-checklist.md) | Per-session AI checklist (section 6), copy-paste task template (section 7) |
+| [design.md](docs/design.md) | Design principles, five tradeoffs, why Lite is shaped this way |
+| [platforms.md](docs/platforms.md) | Platform support matrix (Qoder / OpenCode / Claude / Cline), install logic, sub-agent differences |
+| [trellis-cli.md](docs/trellis-cli.md) | Complete `trellis.py` command reference with scenarios |
+| [usage-guide.md](docs/usage-guide.md) | Full workflow walkthrough from install to archive |
+| [installation-guide.md](docs/installation-guide.md) | Install / uninstall manual, macOS bash 4+ gate, troubleshooting |
+| [exit-codes.md](docs/exit-codes.md) | POSIX exit code convention (0/1), when each applies, CI/pre-commit usage |
+| [architecture-review.md](docs/architecture-review.md) | Debt log — past design decisions and the reasoning behind them |
