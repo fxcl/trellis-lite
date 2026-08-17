@@ -1,6 +1,6 @@
 # Trellis Lite — 最佳实践指南
 
-> 基于 19 轮 oracle-reviewer 审查沉淀 + ~2130 行实现 + 191 个 unittest 覆盖的实战经验。
+> 基于 19 轮 oracle-reviewer 审查沉淀 + ~2130 行实现 + 202 个 unittest 覆盖的实战经验。
 >
 > 配套文档：
 > - [README.md](../README.md) — 快速上手
@@ -826,7 +826,7 @@ AI 路径：
 - **不要期待 `install.sh` 重装会覆盖任何东西**（见第一节“重装语义”）
 - **不要手动改 task.json**（会被 `doctor` 报 Warning，且会绕开 set_status 守门）
 - **不要把 `task list` / `task current` 当 CI 闸门**（它们空状态返 0）
-- **不要为每轮审查都跑全量 191 测试——只跑受影响的模块**（例如修改 `_task_archive` 后只跑 `test_task`；修改 `_check_*` 后只跑 `test_doctor`）
+- **不要为每轮审查都跑全量 202 测试——只跑受影响的模块**（例如修改 `_task_archive` 后只跑 `test_task`；修改 `_check_*` 后只跑 `test_doctor`）
 - **不要在没有跨调用者追踪前宣称“深度收敛”**：代码表面 0 P1 但 helper 边角不一致（如 raw mkdir 三处）会被下轮 oracle 抓出
 
 ---
@@ -872,7 +872,7 @@ wc -l lite/.trellis-lite/scripts/trellis.py
 cd lite && python3 -m unittest tests.test_* 2>&1 | grep "Ran"
 
 # 2. grep 所有需要同步的位置
-grep -rn "~1878\|~1879\|~1888\|~2129\|~2130\|165 个\|166 个\|190 个\|191 个" lite/README.md lite/docs/
+grep -rn "~1878\|~1879\|~1888\|~2129\|~2130\|165 个\|166 个\|190 个\|191 个\|199 个\|202 个" lite/README.md lite/docs/
 
 # 3. 一次性 SearchReplace 同步全部位置
 ```

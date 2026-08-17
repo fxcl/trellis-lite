@@ -9,9 +9,13 @@
 #   ./install.sh [target-dir] [developer-name] [--platforms <list>]
 #
 # Platforms (default: all):
-#   qoder       → AGENTS.md + .qoder/agents/ (trellis-implement, trellis-check, trellis-brainstorm)
-#   claude      → CLAUDE.md + .claude/commands/trellis/ (9 slash commands: context, new, start, check, finish, archive, doctor, cancel, list)
-#   opencode    → AGENTS.md (shared with qoder) + .opencode/agents/ + .opencode/commands/ (9 commands)
+#   qoder       → AGENTS.md + .qoder/agents/ (trellis-brainstorm, trellis-implement, trellis-check)
+#                 + .qoder/skills/trellis-*/SKILL.md (12 slash entry points: 4 deep-workflow skills
+#                 generated from .trellis-lite/skills/ + 8 py-command wrappers generated from
+#                 templates/claude/commands/trellis-*.md; trellis-check is the deep-workflow version)
+#   claude      → CLAUDE.md + .claude/commands/ (9 slash commands: trellis-context ... trellis-list)
+#   opencode    → AGENTS.md (shared with qoder) + .opencode/agents/ (3 agents)
+#                 + .opencode/commands/ (9 commands: trellis-context ... trellis-list)
 #   cline       → .clinerules/trellis-lite.md
 #   all         → all of the above (default)
 #
@@ -290,6 +294,89 @@ if has_platform "qoder"; then
     fi
 fi
 
+# Qoder → .qoder/skills/trellis-*/SKILL.md (slash entry points)
+#
+# Qoder has no standalone commands directory; skills are its slash entry
+# points. Each SKILL.md is GENERATED at install time: thin YAML frontmatter
+# + the verbatim body from .trellis-lite/skills/<name>.md (already copied to
+# the target). The .trellis-lite/skills/ files remain the single body source.
+# Wrappers are generated on FIRST install only; re-installs skip existing
+# ones (delete .qoder/skills/trellis-*/ and re-run install to regenerate
+# after a skills source update).
+if has_platform "qoder"; then
+    SRC_SKILLS="${TARGET_DIR}/.trellis-lite/skills"
+    DST_QODER_SKILLS="${TARGET_DIR}/.qoder/skills"
+
+    if [ -d "$SRC_SKILLS" ]; then
+        for f in "$SRC_SKILLS"/*.md; do
+            [ -f "$f" ] || continue
+            skill_name="$(basename "$f" .md)"
+            case "$skill_name" in
+                brainstorm)  skill_desc="Trellis PLAN phase: turn a request into a PRD via codebase exploration and one-question-at-a-time interviews" ;;
+                before-dev)  skill_desc="Trellis CODE phase: mandatory pre-implementation routine — load task artifacts, read specs, follow existing patterns" ;;
+                check)       skill_desc="Trellis WRAP phase: review changes against specs and PRD, run project checks, self-fix, report" ;;
+                update-spec) skill_desc="Trellis WRAP phase: capture reusable lessons into .trellis-lite/spec/ files" ;;
+                *)           skill_desc="Trellis Lite workflow skill: ${skill_name}" ;;
+            esac
+            DST_SKILL_DIR="${DST_QODER_SKILLS}/trellis-${skill_name}"
+            if [ -f "${DST_SKILL_DIR}/SKILL.md" ]; then
+                echo -e "${YELLOW}⚠  .qoder/skills/trellis-${skill_name}/SKILL.md already exists. Skipping.${NC}"
+            else
+                mkdir -p "$DST_SKILL_DIR"
+                {
+                    echo "---"
+                    echo "name: trellis-${skill_name}"
+                    # Block scalar: skill descriptions contain ': ' which is
+                    # invalid in a YAML plain scalar.
+                    echo "description: |"
+                    echo "  ${skill_desc}"
+                    echo "---"
+                    echo ""
+                    cat "$f"
+                } > "${DST_SKILL_DIR}/SKILL.md"
+                INSTALLED_FILES+=("${DST_SKILL_DIR}/SKILL.md")
+            fi
+        done
+    fi
+
+    # Py-command wrappers: one skill per trellis.py subcommand so Qoder gets
+    # the same /trellis-context, /trellis-new, ... slash entries Claude and
+    # OpenCode have. Body source is templates/claude/commands/trellis-*.md
+    # (the single source for command-map bodies across all three platforms):
+    # keep the body verbatim, drop the Claude frontmatter (incl.
+    # allowed-tools), wrap in skill frontmatter with the description reused
+    # from the Claude file. trellis-check is SKIPPED — the deep-workflow
+    # skill above already owns that name and covers py check.
+    # Same first-install-only rule as the deep-workflow skills.
+    SRC_CLAUDE_COMMANDS_FOR_QODER="${SCRIPT_DIR}/templates/claude/commands"
+    if [ -d "$SRC_CLAUDE_COMMANDS_FOR_QODER" ]; then
+        for f in "$SRC_CLAUDE_COMMANDS_FOR_QODER"/trellis-*.md; do
+            [ -f "$f" ] || continue
+            cmd_name="$(basename "$f" .md)"
+            [ "$cmd_name" = "trellis-check" ] && continue
+            DST_SKILL_DIR="${DST_QODER_SKILLS}/${cmd_name}"
+            if [ -f "${DST_SKILL_DIR}/SKILL.md" ]; then
+                echo -e "${YELLOW}⚠  .qoder/skills/${cmd_name}/SKILL.md already exists. Skipping.${NC}"
+            else
+                cmd_desc="$(sed -n 's/^description:[[:space:]]*//p' "$f" | head -n 1)"
+                mkdir -p "$DST_SKILL_DIR"
+                {
+                    echo "---"
+                    echo "name: ${cmd_name}"
+                    echo "description: |"
+                    echo "  ${cmd_desc}"
+                    echo "---"
+                    # Body = everything after the closing --- of the Claude
+                    # frontmatter (it already opens with a blank line, so no
+                    # extra separator is needed here).
+                    awk 'NR==1{next} /^---/{p=1; next} p' "$f"
+                } > "${DST_SKILL_DIR}/SKILL.md"
+                INSTALLED_FILES+=("${DST_SKILL_DIR}/SKILL.md")
+            fi
+        done
+    fi
+fi
+
 # OpenCode → .opencode/agents/ + .opencode/commands/
 if has_platform "opencode"; then
     # Agents
@@ -329,18 +416,18 @@ if has_platform "opencode"; then
     fi
 fi
 
-# Claude Code → .claude/commands/trellis/ (slash commands)
+# Claude Code → .claude/commands/trellis-*.md (slash commands)
 if has_platform "claude"; then
-    SRC_CLAUDE_COMMANDS="${SCRIPT_DIR}/templates/claude/commands/trellis"
-    DST_CLAUDE_COMMANDS="${TARGET_DIR}/.claude/commands/trellis"
+    SRC_CLAUDE_COMMANDS="${SCRIPT_DIR}/templates/claude/commands"
+    DST_CLAUDE_COMMANDS="${TARGET_DIR}/.claude/commands"
 
     if [ -d "$SRC_CLAUDE_COMMANDS" ]; then
         mkdir -p "$DST_CLAUDE_COMMANDS"
-        for f in "$SRC_CLAUDE_COMMANDS"/*.md; do
+        for f in "$SRC_CLAUDE_COMMANDS"/trellis-*.md; do
             [ -f "$f" ] || continue
             DST_FILE="$DST_CLAUDE_COMMANDS/$(basename "$f")"
             if [ -f "$DST_FILE" ]; then
-                echo -e "${YELLOW}⚠  .claude/commands/trellis/$(basename "$f") already exists. Skipping.${NC}"
+                echo -e "${YELLOW}⚠  .claude/commands/$(basename "$f") already exists. Skipping.${NC}"
             else
                 cp "$f" "$DST_FILE"
                 INSTALLED_FILES+=("$DST_FILE")

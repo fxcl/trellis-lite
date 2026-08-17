@@ -79,6 +79,114 @@ class TestInstall(unittest.TestCase):
         self.assertTrue((self.tmpdir / ".clinerules/trellis-lite.md").is_file())
         self.assertFalse((self.tmpdir / "CLAUDE.md").exists())
 
+    # ---- Platform parity: agents / commands / skills deployment ----------
+
+    QODER_AGENTS = ("trellis-brainstorm.md", "trellis-implement.md", "trellis-check.md")
+    QODER_SKILLS = ("trellis-brainstorm", "trellis-before-dev", "trellis-check", "trellis-update-spec")
+    # Py-command skill wrappers: one per trellis.py subcommand except check
+    # (the deep-workflow skill owns that name).
+    QODER_COMMAND_SKILLS = ("trellis-context", "trellis-new", "trellis-start", "trellis-finish",
+                            "trellis-archive", "trellis-doctor", "trellis-cancel", "trellis-list")
+    TRELLIS_COMMANDS = ("context", "new", "start", "check", "finish", "archive", "doctor", "cancel", "list")
+
+    def test_install_qoder_deploys_agents_and_skills(self) -> None:
+        """--platforms qoder must ship 3 agents + 12 generated SKILL.md wrappers.
+
+        4 deep-workflow skills are generated from the runtime
+        .trellis-lite/skills/*.md bodies; 8 py-command wrappers are generated
+        from templates/claude/commands/trellis-*.md (single command-map body
+        source, shared with claude/opencode). Together they give Qoder the
+        same /trellis-* slash entries as the other platforms.
+        """
+        r = self._run_install("tester", "--platforms", "qoder")
+        self.assertEqual(r.returncode, 0, f"install failed: {r.stdout}\n{r.stderr}")
+        for agent in self.QODER_AGENTS:
+            self.assertTrue(
+                (self.tmpdir / ".qoder/agents" / agent).is_file(),
+                f".qoder/agents/{agent} must be installed",
+            )
+        for skill in self.QODER_SKILLS:
+            skill_md = self.tmpdir / ".qoder/skills" / skill / "SKILL.md"
+            self.assertTrue(skill_md.is_file(), f".qoder/skills/{skill}/SKILL.md must be generated")
+            # Generated wrapper = frontmatter (name) + verbatim body from
+            # .trellis-lite/skills/<name>.md. Assert both halves.
+            content = skill_md.read_text()
+            self.assertIn(f"name: {skill}", content)
+            # Descriptions contain ': ' so the frontmatter must use a YAML
+            # block scalar — strict parsers reject ': ' in plain scalars.
+            self.assertIn("description: |", content)
+            body = (self.tmpdir / ".trellis-lite/skills" / f"{skill.removeprefix('trellis-')}.md").read_text()
+            self.assertIn(body, content, "SKILL.md must embed the verbatim skill body")
+        # Py-command wrappers: byte-exact reconstruction against the Claude
+        # source — frontmatter rebuilt (name + block-scalar description)
+        # around the verbatim body.
+        for cmd in self.QODER_COMMAND_SKILLS:
+            skill_md = self.tmpdir / ".qoder/skills" / cmd / "SKILL.md"
+            self.assertTrue(skill_md.is_file(), f".qoder/skills/{cmd}/SKILL.md must be generated")
+            claude = (LITE_ROOT / "templates/claude/commands" / f"{cmd}.md").read_text()
+            # body = everything the install awk keeps: one leading newline
+            # is the closing '---' line terminator, which awk strips.
+            _, front, body = claude.split("---", 2)
+            body = body.removeprefix("\n")
+            desc = next(
+                line[len("description:"):].strip()
+                for line in front.splitlines()
+                if line.startswith("description:")
+            )
+            expected = (
+                "---\n"
+                f"name: {cmd}\n"
+                "description: |\n"
+                f"  {desc}\n"
+                "---\n"
+                f"{body}"
+            )
+            self.assertEqual(expected, skill_md.read_text(),
+                             f"{cmd}/SKILL.md must rewrap the Claude body verbatim")
+        # Exactly 12 skill dirs: 4 deep-workflow + 8 command wrappers, and no
+        # duplicate trellis-check variant (the deep-workflow skill owns it).
+        skill_dirs = sorted(p.name for p in (self.tmpdir / ".qoder/skills").iterdir() if p.is_dir())
+        self.assertEqual(
+            sorted(self.QODER_SKILLS + self.QODER_COMMAND_SKILLS),
+            skill_dirs,
+            ".qoder/skills must hold exactly the 12 trellis entries",
+        )
+        # Other platforms' artifacts must NOT be present
+        self.assertFalse((self.tmpdir / ".opencode").exists())
+        self.assertFalse((self.tmpdir / ".claude").exists())
+
+    def test_install_claude_deploys_trellis_commands(self) -> None:
+        """--platforms claude must ship the 9 flat trellis-*.md command files."""
+        r = self._run_install("tester", "--platforms", "claude")
+        self.assertEqual(r.returncode, 0, f"install failed: {r.stdout}\n{r.stderr}")
+        for cmd in self.TRELLIS_COMMANDS:
+            self.assertTrue(
+                (self.tmpdir / ".claude/commands" / f"trellis-{cmd}.md").is_file(),
+                f".claude/commands/trellis-{cmd}.md must be installed",
+            )
+        # Flat names only — no trellis/ subdirectory namespace
+        self.assertFalse((self.tmpdir / ".claude/commands/trellis").exists())
+        # No agents/commands dirs for other platforms
+        self.assertFalse((self.tmpdir / ".qoder").exists())
+        self.assertFalse((self.tmpdir / ".opencode").exists())
+
+    def test_install_opencode_deploys_agents_and_commands(self) -> None:
+        """--platforms opencode must ship 3 agents + 9 command files."""
+        r = self._run_install("tester", "--platforms", "opencode")
+        self.assertEqual(r.returncode, 0, f"install failed: {r.stdout}\n{r.stderr}")
+        for agent in self.QODER_AGENTS:
+            self.assertTrue(
+                (self.tmpdir / ".opencode/agents" / agent).is_file(),
+                f".opencode/agents/{agent} must be installed",
+            )
+        for cmd in self.TRELLIS_COMMANDS:
+            self.assertTrue(
+                (self.tmpdir / ".opencode/commands" / f"trellis-{cmd}.md").is_file(),
+                f".opencode/commands/trellis-{cmd}.md must be installed",
+            )
+        self.assertFalse((self.tmpdir / ".qoder").exists())
+        self.assertFalse((self.tmpdir / ".claude").exists())
+
     def test_install_cleans_template_runtime_files(self) -> None:
         """If the template was committed with stray runtime state, install must wipe it."""
         template_runtime = LITE_ROOT / ".trellis-lite"
@@ -161,6 +269,53 @@ class TestInstall(unittest.TestCase):
         )
 
 
+class TestTemplates(unittest.TestCase):
+    """Template-source invariants that need neither bash 4+ nor an install run."""
+
+    COMMANDS = ("context", "new", "start", "check", "finish", "archive", "doctor", "cancel", "list")
+    AGENTS = ("trellis-brainstorm.md", "trellis-implement.md", "trellis-check.md")
+
+    def test_claude_and_opencode_commands_share_body(self) -> None:
+        """Each opencode command must be byte-identical to its claude twin
+        except for the allowed-tools frontmatter line, so the two sets can
+        never drift apart when edited by hand. Claude bodies must use the
+        flat /trellis-<cmd> spelling throughout (no /trellis: leftovers).
+        """
+        for cmd in self.COMMANDS:
+            claude = (LITE_ROOT / "templates/claude/commands" / f"trellis-{cmd}.md").read_text()
+            opencode = (LITE_ROOT / "templates/opencode/commands" / f"trellis-{cmd}.md").read_text()
+            self.assertNotIn("/trellis:", claude, f"claude trellis-{cmd}.md still references /trellis:")
+            expected = "".join(
+                line for line in claude.splitlines(keepends=True)
+                if not line.startswith("allowed-tools:")
+            )
+            self.assertEqual(
+                expected, opencode,
+                f"templates/opencode/commands/trellis-{cmd}.md drifted from "
+                f"templates/claude/commands/trellis-{cmd}.md",
+            )
+
+    def test_agent_frontmatter_descriptions_avoid_plain_colon(self) -> None:
+        """Plain-scalar YAML descriptions must not contain ': ' — the
+        frontmatter is the machine-readable part and strict parsers
+        (js-yaml/PyYAML/libyaml) reject it. Block scalars are exempt.
+        """
+        for plat in ("qoder", "opencode"):
+            for agent in self.AGENTS:
+                text = (LITE_ROOT / "templates" / plat / "agents" / agent).read_text()
+                parts = text.split("---", 2)
+                self.assertGreaterEqual(len(parts), 3, f"{plat}/agents/{agent}: missing frontmatter")
+                for line in parts[1].splitlines():
+                    if line.startswith("description:"):
+                        value = line[len("description:"):].strip()
+                        if not value.startswith(("|", ">")):
+                            self.assertNotIn(
+                                ": ", value,
+                                f"{plat}/agents/{agent}: plain-scalar description "
+                                "contains ': ' (invalid YAML)",
+                            )
+
+
 class TestUninstall(unittest.TestCase):
     def setUp(self) -> None:
         # F62: even though uninstall.sh itself is bash-3.2 safe, the
@@ -223,6 +378,67 @@ class TestUninstall(unittest.TestCase):
         # Runtime and platform entries must be gone
         for p in (".trellis-lite", "AGENTS.md", "CLAUDE.md", ".clinerules"):
             self.assertFalse((self.tmpdir / p).exists(), f"{p} should be removed post-uninstall")
+
+    # ---- Platform parity: agents / commands / skills cleanup -------------
+
+    def test_uninstall_removes_platform_agent_and_command_dirs(self) -> None:
+        """uninstall must remove .qoder/ (agents+skills), .opencode/ (agents+
+        commands) and .claude/commands/ trellis-* commands — the full set
+        install.sh deploys for platform parity — and take empty parent dirs
+        with it.
+        """
+        self._install_all()
+        # Sanity: the platform-parity artifacts exist post-install
+        self.assertTrue((self.tmpdir / ".qoder/agents/trellis-implement.md").is_file())
+        self.assertTrue((self.tmpdir / ".qoder/skills/trellis-check/SKILL.md").is_file())
+        self.assertTrue((self.tmpdir / ".qoder/skills/trellis-context/SKILL.md").is_file())
+        self.assertTrue((self.tmpdir / ".opencode/agents/trellis-implement.md").is_file())
+        self.assertTrue((self.tmpdir / ".opencode/commands/trellis-context.md").is_file())
+        self.assertTrue((self.tmpdir / ".claude/commands/trellis-context.md").is_file())
+
+        r = self._run_uninstall(str(self.tmpdir))
+        self.assertEqual(r.returncode, 0, f"uninstall failed: {r.stdout}\n{r.stderr}")
+
+        # Platform dirs must be gone entirely (empty parents pruned)
+        self.assertFalse((self.tmpdir / ".qoder").exists(), ".qoder/ must be removed")
+        self.assertFalse((self.tmpdir / ".opencode").exists(), ".opencode/ must be removed")
+        self.assertFalse((self.tmpdir / ".claude").exists(), ".claude/ must be removed")
+
+    def test_uninstall_keeps_user_platform_files(self) -> None:
+        """Only the trellis-* namespace is ours — user-created agents/skills/
+        commands in the same platform dirs must survive uninstall.
+        """
+        self._install_all()
+        user_agent = self.tmpdir / ".qoder/agents/my-own-agent.md"
+        user_agent.parent.mkdir(parents=True, exist_ok=True)
+        user_agent.write_text("---\nname: my-own-agent\n---\ncustom agent\n")
+        user_skill = self.tmpdir / ".qoder/skills/my-own-skill/SKILL.md"
+        user_skill.parent.mkdir(parents=True, exist_ok=True)
+        user_skill.write_text("---\nname: my-own-skill\n---\ncustom skill\n")
+        user_oc_cmd = self.tmpdir / ".opencode/commands/my-own-command.md"
+        user_oc_cmd.parent.mkdir(parents=True, exist_ok=True)
+        user_oc_cmd.write_text("---\ndescription: mine\n---\ncustom command\n")
+        user_cl_cmd = self.tmpdir / ".claude/commands/my-own-command.md"
+        user_cl_cmd.parent.mkdir(parents=True, exist_ok=True)
+        user_cl_cmd.write_text("---\ndescription: mine\n---\ncustom command\n")
+
+        r = self._run_uninstall(str(self.tmpdir))
+        self.assertEqual(r.returncode, 0, f"uninstall failed: {r.stdout}\n{r.stderr}")
+
+        # Trellis artifacts gone, user files intact, non-empty dirs kept
+        self.assertFalse((self.tmpdir / ".qoder/agents/trellis-brainstorm.md").exists())
+        self.assertFalse((self.tmpdir / ".qoder/skills/trellis-check").exists())
+        self.assertFalse((self.tmpdir / ".opencode/commands/trellis-context.md").exists())
+        self.assertFalse((self.tmpdir / ".claude/commands/trellis-context.md").exists())
+        self.assertTrue(user_agent.is_file(), "user's .qoder/agents file must survive")
+        self.assertTrue(user_skill.is_file(), "user's .qoder/skills file must survive")
+        self.assertTrue(user_oc_cmd.is_file(), "user's .opencode/commands file must survive")
+        self.assertTrue(user_cl_cmd.is_file(), "user's .claude/commands file must survive")
+        # .opencode had only commands; agents+trellis commands are gone but
+        # the dir survives because my-own-command.md keeps it non-empty
+        # (same for .claude/commands)
+        self.assertTrue((self.tmpdir / ".opencode/commands").is_dir())
+        self.assertTrue((self.tmpdir / ".claude/commands").is_dir())
 
     def test_uninstall_refuses_when_nothing_installed(self) -> None:
         """Empty dir with no Trellis artifacts must be rejected, not silently OK."""

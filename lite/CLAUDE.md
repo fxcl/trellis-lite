@@ -18,9 +18,19 @@ Always start sub-agent prompts with: `Active task: <path from 'trellis.py task c
 
 ### Slash Commands
 
-If you create `.claude/commands/` custom slash commands, they can wrap trellis.py:
+`install.sh --platforms claude` ships 9 slash commands in `.claude/commands/` (flat `trellis-*.md` names, same namespace as OpenCode):
 
-```
-/trellis-context    → python3 .trellis-lite/scripts/trellis.py context
-/trellis-current    → python3 .trellis-lite/scripts/trellis.py task current
-```
+| Command | What it does |
+|---|---|
+| `/trellis-context` | Current state snapshot — active task, phase, recommended next step |
+| `/trellis-new <title>` | PLAN: create a task + draft the PRD |
+| `/trellis-start` | Activate the planning task (`task start`) |
+| `/trellis-check` | Review the working diff against specs + PRD |
+| `/trellis-finish` | `task finish` + session record + spec-update reminders |
+| `/trellis-archive` | Archive a done task |
+| `/trellis-doctor` | Health check (`doctor`) |
+| `/trellis-cancel` | Cancel the active task |
+| `/trellis-list` | List tasks (all statuses) |
+
+If these commands are missing, either re-run `install.sh --platforms claude`
+or invoke `trellis.py` subcommands directly.

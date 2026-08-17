@@ -49,12 +49,21 @@ Coding conventions live in `.trellis-lite/spec/*.md`. **Always read relevant spe
 
 ## Sub-Agent Usage
 
-For larger tasks, you may dispatch sub-agents (if your AI tool supports it):
+For larger tasks, prefer the platform-specific Trellis agents installed by
+`install.sh` (skip to the fallback below if they are not installed):
 
-- **Implement**: Spawn a general-purpose agent. Tell it to read `prd.md` + specs, implement, run lint/typecheck.
-- **Review**: Spawn a code-review agent. Tell it to review `git diff` against specs + PRD.
+- **PLAN / Brainstorm**: dispatch `trellis-brainstorm` — turns a rough request into a PRD.
+- **Implement**: dispatch `trellis-implement` — reads `prd.md` + specs itself, implements, runs lint/typecheck/tests.
+- **Review**: dispatch `trellis-check` — reviews `git diff` against specs + PRD.
+
+Locations: Qoder → `.qoder/agents/`, OpenCode → `.opencode/agents/`.
+These agents already know the workflow; you only need to point them at the task.
 
 Always start sub-agent prompts with: `Active task: <path from 'trellis.py task current'>`
+
+Fallback (no Trellis agents installed): spawn the tool's generic agents —
+- **Implement**: a general-purpose agent. Tell it to read `prd.md` + specs, implement, run lint/typecheck.
+- **Review**: a code-review agent. Tell it to review `git diff` against specs + PRD.
 
 > Platform-specific sub-agent guidance is in the bridge file (e.g. `CLAUDE.md` for Claude Code).
 
