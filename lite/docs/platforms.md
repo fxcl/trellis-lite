@@ -51,6 +51,7 @@ Trellis Lite 支持 4 个 AI 编码工具，核心工作流（PLAN → CODE → 
 - **入口文件**：`.clinerules/trellis-lite.md`
 - **实现逻辑**：Cline 自动检测 `.clinerules/` 目录下的规则文件。**关键差异**：Cline **不支持 `@import` 语法**，所以 install.sh 直接 `cp AGENTS.md` 复制完整内容到 `.clinerules/trellis-lite.md`（而非像 Claude Code 那样用 import 桥接）。
 - **Sub-Agent 机制**：无原生 sub-agent，在主会话中直接实现，或通过 MCP 扩展
+- **Skills（slash 入口）**：`.cline/skills/trellis-*/SKILL.md` 由 install.sh 在安装时生成，共 12 个 slash 入口，与 Qoder 同一生成循环产出（字节级一致）：4 个深度流程 skill（正文源 `.trellis-lite/skills/*.md`）+ 8 个 py 命令映射（正文源 `templates/claude/commands/`）。触发方式：`/skill-name` slash 命令显式触发，或 description 自动匹配（use_skill 工具）。Cline 无独立 agents 机制（单会话，主会话直接实现）
 
 ---
 
@@ -95,6 +96,8 @@ has_platform() {
 | OpenCode | `templates/opencode/agents/*.md` | `.opencode/agents/*.md` | 3 个平台专用 agent |
 | OpenCode | `templates/opencode/commands/*.md` | `.opencode/commands/*.md` | 9 个命令（与 Claude 版同源） |
 | Cline | `AGENTS.md` | `.clinerules/trellis-lite.md` | `mkdir -p .clinerules/` + 复制完整内容 |
+| Cline | `.trellis-lite/skills/*.md` | `.cline/skills/trellis-*/SKILL.md` | 安 装时生成 4 个深度流程 skill（与 Qoder 同一循环） |
+| Cline | `templates/claude/commands/trellis-*.md` | `.cline/skills/trellis-*/SKILL.md` | 安 装时生成 8 个 py 命令映射（与 Qoder/Claude 版同源；check 由深度流程版承担） |
 
 ### 幂等保护
 
@@ -134,7 +137,7 @@ has_platform() {
 | **Qoder** | `AGENTS.md` + `.qoder/agents/`（3 个：brainstorm / implement / check） + `.qoder/skills/trellis-*/SKILL.md`（12 个，安装时生成：4 深度流程 + 8 py 命令映射） | 原生入口 + 平台专用 agents + slash 入口 |
 | **OpenCode** | `AGENTS.md`（与 Qoder 共享） + `.opencode/agents/`（3 个） + `.opencode/commands/`（9 个：trellis-context … trellis-list） | 原生兼容 + 平台专用 agents + 命令 |
 | **Claude Code** | `CLAUDE.md` + `.claude/commands/`（9 个：`/trellis-*` 命名空间） | `@AGENTS.md` 桥接 + slash 命令 |
-| **Cline** | `.clinerules/` 目录 + `.clinerules/trellis-lite.md` | 复制 AGENTS.md 完整内容（无 agents/commands 机制） |
+| **Cline** | `.clinerules/` 目录 + `.clinerules/trellis-lite.md` + `.cline/skills/trellis-*/SKILL.md`（12 个，安装时生成：4 深度流程 + 8 py 命令映射） | 复制 AGENTS.md 完整内容 + skills slash 入口（无 agents 机制） |
 
 ### 3. 使用过程中动态创建（非安装时）
 
@@ -153,7 +156,7 @@ has_platform() {
 | **Qoder** | `Agent` 工具派发 | `.qoder/agents/` 3 个（brainstorm / implement / check） | `.qoder/skills/` 12 个 slash 入口（4 深度流程 + 8 py 命令映射） |
 | **Claude Code** | `Task` 工具派发（通用 `general-purpose` / `code-reviewer`） | — | `.claude/commands/` 9 个 `/trellis-*` |
 | **OpenCode** | 内置 agent 系统 | `.opencode/agents/` 3 个（同名，OpenCode frontmatter） | `.opencode/commands/` 9 个 |
-| **Cline** | 无原生 sub-agent | — | —（主会话直接实现） |
+| **Cline** | 无原生 sub-agent | — | `.cline/skills/` 12 个 slash 入口（与 Qoder 同源生成；主会话直接实现） |
 
 > 小/中等任务在所有平台都是主会话直接实现，sub-agent 仅影响大任务。三平台 agent 模板正文同源（差异仅在 frontmatter），正文单一源在 `templates/`，skills 正文单一源在 `.trellis-lite/skills/`。
 
@@ -166,5 +169,5 @@ has_platform() {
    - Qoder / OpenCode → 原生 AGENTS.md（零桥接）
    - Claude Code → `@AGENTS.md` import 桥接（避免重复维护）
    - Cline → 复制完整内容（不支持 import 语法）
-3. **Sub-agent 与命令分发**：Qoder（`.qoder/agents/` + `.qoder/skills/`）、Claude Code（`.claude/commands/` trellis-* 命令）、OpenCode（`.opencode/agents/` + `.opencode/commands/`）、Cline（无原生机制，主会话直接实现）。agents/commands 正文单一源在 `templates/`，skills 正文单一源在 `.trellis-lite/skills/`（SKILL.md 包装首次安装时生成，重装不覆盖；源更新后删 `.qoder/skills/trellis-*/` 重装可重新生成）。
+3. **Sub-agent 与命令分发**：Qoder（`.qoder/agents/` + `.qoder/skills/`）、Claude Code（`.claude/commands/` trellis-* 命令）、OpenCode（`.opencode/agents/` + `.opencode/commands/`）、Cline（`.cline/skills/` 12 个 slash 入口，无 agents 机制主会话直接实现）。agents/commands 正文单一源在 `templates/`，skills 正文单一源在 `.trellis-lite/skills/`（SKILL.md 包装首次安装时生成，重装不覆盖；源更新后删 `.qoder/skills/trellis-*/` 或 `.cline/skills/trellis-*/` 重装可重新生成）。
 4. **安装幂等**：所有入口文件均受幂等保护，重装不会覆盖用户编辑过的版本。

@@ -1,6 +1,6 @@
 # Trellis Lite — 最佳实践指南
 
-> 基于 19 轮 oracle-reviewer 审查沉淀 + ~2130 行实现 + 202 个 unittest 覆盖的实战经验。
+> 基于 19 轮 oracle-reviewer 审查沉淀 + ~2130 行实现 + 204 个 unittest 覆盖的实战经验。
 >
 > 配套文档：
 > - [README.md](../README.md) — 快速上手
@@ -872,7 +872,7 @@ wc -l lite/.trellis-lite/scripts/trellis.py
 cd lite && python3 -m unittest tests.test_* 2>&1 | grep "Ran"
 
 # 2. grep 所有需要同步的位置
-grep -rn "~1878\|~1879\|~1888\|~2129\|~2130\|165 个\|166 个\|190 个\|191 个\|199 个\|202 个" lite/README.md lite/docs/
+grep -rn "~1878\|~1879\|~1888\|~2129\|~2130\|165 个\|166 个\|190 个\|191 个\|199 个\|202 个\|204 个" lite/README.md lite/docs/
 
 # 3. 一次性 SearchReplace 同步全部位置
 ```

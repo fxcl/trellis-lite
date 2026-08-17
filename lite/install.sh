@@ -16,7 +16,8 @@
 #   claude      → CLAUDE.md + .claude/commands/ (9 slash commands: trellis-context ... trellis-list)
 #   opencode    → AGENTS.md (shared with qoder) + .opencode/agents/ (3 agents)
 #                 + .opencode/commands/ (9 commands: trellis-context ... trellis-list)
-#   cline       → .clinerules/trellis-lite.md
+#   cline       → .clinerules/trellis-lite.md + .cline/skills/trellis-*/SKILL.md
+#                 (12 slash entry points, same generated wrappers as qoder)
 #   all         → all of the above (default)
 #
 # Examples:
@@ -294,18 +295,31 @@ if has_platform "qoder"; then
     fi
 fi
 
-# Qoder → .qoder/skills/trellis-*/SKILL.md (slash entry points)
+# Skills-based platforms → .qoder/skills/ + .cline/skills/trellis-*/SKILL.md
+# (slash entry points)
 #
-# Qoder has no standalone commands directory; skills are its slash entry
-# points. Each SKILL.md is GENERATED at install time: thin YAML frontmatter
-# + the verbatim body from .trellis-lite/skills/<name>.md (already copied to
-# the target). The .trellis-lite/skills/ files remain the single body source.
-# Wrappers are generated on FIRST install only; re-installs skip existing
-# ones (delete .qoder/skills/trellis-*/ and re-run install to regenerate
-# after a skills source update).
-if has_platform "qoder"; then
-    SRC_SKILLS="${TARGET_DIR}/.trellis-lite/skills"
-    DST_QODER_SKILLS="${TARGET_DIR}/.qoder/skills"
+# Qoder and Cline have no standalone commands directory; skills are their
+# slash entry points (Qoder: skill dirs are its slash entries; Cline: skill
+# dirs under .cline/skills/, triggered by description match or /skill-name —
+# docs.cline.bot/customization/skills). Each SKILL.md is GENERATED at install
+# time: thin YAML frontmatter + the verbatim body from .trellis-lite/skills/
+# <name>.md (already copied to the target). The .trellis-lite/skills/ files
+# remain the single body source. The SAME generation runs for every skills
+# platform, so wrappers are byte-identical across platforms. Wrappers are
+# generated on FIRST install only; re-installs skip existing ones (delete
+# <plat>/skills/trellis-*/ and re-run install to regenerate after a skills
+# source update).
+SKILL_DST_DIRS=()
+has_platform "qoder" && SKILL_DST_DIRS+=("${TARGET_DIR}/.qoder/skills")
+has_platform "cline" && SKILL_DST_DIRS+=("${TARGET_DIR}/.cline/skills")
+
+# set -u guard: bash <4.4 errors on expanding an empty array
+if [ "${#SKILL_DST_DIRS[@]}" -gt 0 ]; then
+SRC_SKILLS="${TARGET_DIR}/.trellis-lite/skills"
+SRC_CLAUDE_COMMANDS_FOR_SKILLS="${SCRIPT_DIR}/templates/claude/commands"
+
+for DST_SKILLS in "${SKILL_DST_DIRS[@]}"; do
+    DST_SKILLS_REL="${DST_SKILLS#"${TARGET_DIR}/"}"
 
     if [ -d "$SRC_SKILLS" ]; then
         for f in "$SRC_SKILLS"/*.md; do
@@ -318,9 +332,9 @@ if has_platform "qoder"; then
                 update-spec) skill_desc="Trellis WRAP phase: capture reusable lessons into .trellis-lite/spec/ files" ;;
                 *)           skill_desc="Trellis Lite workflow skill: ${skill_name}" ;;
             esac
-            DST_SKILL_DIR="${DST_QODER_SKILLS}/trellis-${skill_name}"
+            DST_SKILL_DIR="${DST_SKILLS}/trellis-${skill_name}"
             if [ -f "${DST_SKILL_DIR}/SKILL.md" ]; then
-                echo -e "${YELLOW}⚠  .qoder/skills/trellis-${skill_name}/SKILL.md already exists. Skipping.${NC}"
+                echo -e "${YELLOW}⚠  ${DST_SKILLS_REL}/trellis-${skill_name}/SKILL.md already exists. Skipping.${NC}"
             else
                 mkdir -p "$DST_SKILL_DIR"
                 {
@@ -339,24 +353,24 @@ if has_platform "qoder"; then
         done
     fi
 
-    # Py-command wrappers: one skill per trellis.py subcommand so Qoder gets
-    # the same /trellis-context, /trellis-new, ... slash entries Claude and
-    # OpenCode have. Body source is templates/claude/commands/trellis-*.md
-    # (the single source for command-map bodies across all three platforms):
-    # keep the body verbatim, drop the Claude frontmatter (incl.
-    # allowed-tools), wrap in skill frontmatter with the description reused
-    # from the Claude file. trellis-check is SKIPPED — the deep-workflow
-    # skill above already owns that name and covers py check.
+    # Py-command wrappers: one skill per trellis.py subcommand so skills
+    # platforms get the same /trellis-context, /trellis-new, ... slash
+    # entries Claude and OpenCode have. Body source is
+    # templates/claude/commands/trellis-*.md (the single source for
+    # command-map bodies across ALL platforms): keep the body verbatim, drop
+    # the Claude frontmatter (incl. allowed-tools), wrap in skill frontmatter
+    # with the description reused from the Claude file. trellis-check is
+    # SKIPPED — the deep-workflow skill above already owns that name and
+    # covers py check.
     # Same first-install-only rule as the deep-workflow skills.
-    SRC_CLAUDE_COMMANDS_FOR_QODER="${SCRIPT_DIR}/templates/claude/commands"
-    if [ -d "$SRC_CLAUDE_COMMANDS_FOR_QODER" ]; then
-        for f in "$SRC_CLAUDE_COMMANDS_FOR_QODER"/trellis-*.md; do
+    if [ -d "$SRC_CLAUDE_COMMANDS_FOR_SKILLS" ]; then
+        for f in "$SRC_CLAUDE_COMMANDS_FOR_SKILLS"/trellis-*.md; do
             [ -f "$f" ] || continue
             cmd_name="$(basename "$f" .md)"
             [ "$cmd_name" = "trellis-check" ] && continue
-            DST_SKILL_DIR="${DST_QODER_SKILLS}/${cmd_name}"
+            DST_SKILL_DIR="${DST_SKILLS}/${cmd_name}"
             if [ -f "${DST_SKILL_DIR}/SKILL.md" ]; then
-                echo -e "${YELLOW}⚠  .qoder/skills/${cmd_name}/SKILL.md already exists. Skipping.${NC}"
+                echo -e "${YELLOW}⚠  ${DST_SKILLS_REL}/${cmd_name}/SKILL.md already exists. Skipping.${NC}"
             else
                 cmd_desc="$(sed -n 's/^description:[[:space:]]*//p' "$f" | head -n 1)"
                 mkdir -p "$DST_SKILL_DIR"
@@ -375,6 +389,8 @@ if has_platform "qoder"; then
             fi
         done
     fi
+
+done
 fi
 
 # OpenCode → .opencode/agents/ + .opencode/commands/

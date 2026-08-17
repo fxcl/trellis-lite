@@ -23,12 +23,13 @@ if [ ! -d "$TARGET/.trellis-lite" ] \
     && [ ! -f "$TARGET/.clinerules/trellis-lite.md" ] \
     && [ ! -e "$TARGET/.qoder/agents/trellis-brainstorm.md" ] \
     && [ ! -e "$TARGET/.qoder/skills/trellis-brainstorm" ] \
+    && [ ! -e "$TARGET/.cline/skills/trellis-brainstorm" ] \
     && [ ! -e "$TARGET/.opencode/agents/trellis-brainstorm.md" ] \
     && [ ! -e "$TARGET/.opencode/commands/trellis-context.md" ] \
     && [ ! -e "$TARGET/.claude/commands/trellis-context.md" ] \
     && [ ! -f "$TARGET/docs/.trellis-docs" ]; then
     echo "Error: '$TARGET' does not appear to have Trellis Lite installed" >&2
-    echo "  (no .trellis-lite/, AGENTS.md, CLAUDE.md, .clinerules/, .qoder/agents/, .qoder/skills/, .opencode/, .claude/commands/, or docs/ found)" >&2
+    echo "  (no .trellis-lite/, AGENTS.md, CLAUDE.md, .clinerules/, .qoder/agents/, .qoder/skills/, .cline/skills/, .opencode/, .claude/commands/, or docs/ found)" >&2
     exit 1
 fi
 
@@ -96,6 +97,24 @@ done
 if [ -d "$TARGET/.qoder" ] && [ -z "$(ls -A "$TARGET/.qoder")" ]; then
     rmdir "$TARGET/.qoder"
     echo "  ✓ .qoder/ (empty, removed)"
+fi
+
+# Cline skills — remove only Trellis-managed entries (trellis-*),
+# keep user-created skills intact. (.clinerules/ is handled above.)
+for d in "$TARGET"/.cline/skills/trellis-*; do
+    [ -d "$d" ] || continue
+    rm -rf "$d"
+    echo "  ✓ ${d#"$TARGET"/}"
+    removed=$((removed + 1))
+done
+# Prune now-empty skills dir, then the .cline/ parent
+if [ -d "$TARGET/.cline/skills" ] && [ -z "$(ls -A "$TARGET/.cline/skills")" ]; then
+    rmdir "$TARGET/.cline/skills"
+    echo "  ✓ .cline/skills/ (empty, removed)"
+    if [ -d "$TARGET/.cline" ] && [ -z "$(ls -A "$TARGET/.cline")" ]; then
+        rmdir "$TARGET/.cline"
+        echo "  ✓ .cline/ (empty, removed)"
+    fi
 fi
 
 # OpenCode agents + commands — remove only Trellis-managed entries

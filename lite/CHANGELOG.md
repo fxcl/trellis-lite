@@ -12,12 +12,13 @@
 ## [Unreleased] - 2026-08-07
 
 ### 新增
-- **三平台 agents / commands / skills 全量补齐（platform parity）**：Qoder、Claude Code、OpenCode 现在获得一致的 Trellis 能力分发，py 仍是唯一逻辑源、`.trellis-lite/skills/` 仍是唯一正文源 ——
-  - **Qoder**：`.qoder/agents/` 现装 3 个专用 agent（新增 `trellis-implement`，补齐 brainstorm / implement / check 三件套）；新增 `.qoder/skills/` 分发，共 12 个 slash 入口——首次安装时生成：4 个深度流程 skill（brainstorm / before-dev / check / update-spec，源 `.trellis-lite/skills/*.md`）+ 8 个 py 命令映射（trellis-context / trellis-new / trellis-start / trellis-finish / trellis-archive / trellis-doctor / trellis-cancel / trellis-list，源 `templates/claude/commands/`，与 Claude/OpenCode 同源；`/trellis-check` 由深度流程版承担），三平台 slash 入口对等；重装不覆盖，源更新后删 `.qoder/skills/trellis-*/` 重装可重新生成
+- **四平台 agents / commands / skills 全量补齐（platform parity）**：Qoder、Claude Code、OpenCode、Cline 现在获得一致的 Trellis 能力分发，py 仍是唯一逻辑源、`.trellis-lite/skills/` 仍是唯一正文源 ——
+  - **Qoder**：`.qoder/agents/` 现装 3 个专用 agent（新增 `trellis-implement`，补齐 brainstorm / implement / check 三件套）；新增 `.qoder/skills/` 分发，共 12 个 slash 入口——首次安装时生成：4 个深度流程 skill（brainstorm / before-dev / check / update-spec，源 `.trellis-lite/skills/*.md`）+ 8 个 py 命令映射（trellis-context / trellis-new / trellis-start / trellis-finish / trellis-archive / trellis-doctor / trellis-cancel / trellis-list，源 `templates/claude/commands/`，与 Claude/OpenCode 同源；`/trellis-check` 由深度流程版承担），四平台 slash 入口对等；重装不覆盖，源更新后删 `.qoder/skills/trellis-*/` 重装可重新生成
   - **Claude Code**：新增 `.claude/commands/` 9 个 `/trellis-*` 命令（trellis-context … trellis-list，扁平 `trellis-*.md` 文件名，三平台统一命名空间）
   - **OpenCode**：`.opencode/agents/` 同步补齐 `trellis-implement`；新增 `.opencode/commands/` 9 个同名命令（与 Claude 版同源，仅去 `allowed-tools` frontmatter 行）
-  - **uninstall.sh 同步**：卸载时只清理 Trellis 命名空间（`.qoder/` 的 trellis-* agents+skills、`.opencode/` 的 trellis-* agents+commands、`.claude/commands/` 的 trellis-* 命令），用户自建的同目录文件不受影响，空父目录一并移除
-  - 文档同步：AGENTS.md / CLAUDE.md / platforms.md / usage-guide.md 改为与实际安装产物一致的事实表述；测试套件增至 202 个（test_install.py 新增三平台部署与卸载清理、模板不变量〔claude↔opencode 命令同源、frontmatter 合法 YAML〕、卸载保留用户自建平台文件覆盖，含 qoder SKILL.md verbatim 正文断言）
+  - **Cline**：新增 `.cline/skills/` 分发，共 12 个 slash 入口，与 Qoder 由同一生成循环产出（字节级一致）——4 个深度流程 skill（源 `.trellis-lite/skills/*.md`）+ 8 个 py 命令映射（源 `templates/claude/commands/`）；经 `/skill-name` 或 description 自动匹配触发；Cline 无独立 agents 机制（单会话，主会话直接实现）；重装不覆盖，源更新后删 `.cline/skills/trellis-*/` 重装可重新生成
+  - **uninstall.sh 同步**：卸载时只清理 Trellis 命名空间（`.qoder/` 的 trellis-* agents+skills、`.cline/skills/` 的 trellis-*、`.opencode/` 的 trellis-* agents+commands、`.claude/commands/` 的 trellis-* 命令），用户自建的同目录文件不受影响，空父目录一并移除
+  - 文档同步：AGENTS.md / CLAUDE.md / platforms.md / usage-guide.md 改为与实际安装产物一致的事实表述；测试套件增至 204 个（test_install.py 新增三平台部署与卸载清理、模板不变量〔claude↔opencode 命令同源、frontmatter 合法 YAML〕、卸载保留用户自建平台文件覆盖，含 qoder/cline SKILL.md verbatim 正文与双平台字节一致断言）
 
 ### ⚠ 破坏性变更
 - **`task create` 已有活跃任务时拒绝（返回 1）**：之前是"警告 + 继续并替换活跃指针"，用户容易"丢了任务"。新行为遵循"one task at a time"硬规则 —

@@ -51,7 +51,7 @@ python3 .trellis-lite/scripts/trellis.py task create "实现用户登录"
 | Qoder | `AGENTS.md` | `--platforms qoder` |
 | OpenCode | `AGENTS.md`（原生兼容） | `--platforms opencode` |
 | Claude Code | `CLAUDE.md`（通过 `@AGENTS.md` 导入） | `--platforms claude` |
-| Cline | `.clinerules/trellis-lite.md` | `--platforms cline` |
+| Cline | `.clinerules/trellis-lite.md` + `.cline/skills/`（12 个 slash 入口，与 Qoder 同源） | `--platforms cline` |
 | 全部 | 以上所有 | `--platforms all`（默认） |
 
 ## 目录结构
@@ -128,7 +128,7 @@ PLAN ────────────────► CODE ──────
 
 ## 运行测试
 
-Trellis Lite 自带 202 个 unittest 覆盖全部命令（init / task / session / context / specs / install / doctor / pre-commit hook / status machine / usage consistency）。零依赖、仅需 Python 3.9+（install/uninstall 脚本需 bash 4+） 。
+Trellis Lite 自带 204 个 unittest 覆盖全部命令（init / task / session / context / specs / install / doctor / pre-commit hook / status machine / usage consistency）。零依赖、仅需 Python 3.9+（install/uninstall 脚本需 bash 4+） 。
 
 ```bash
 # 从仓库根运行（注意：Python 3.9+ 需要 `tests.` 包前缀，相对 import 才能工作）

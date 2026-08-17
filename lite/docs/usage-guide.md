@@ -17,10 +17,10 @@ Trellis Lite 支持以下 AI 编码工具，核心工作流完全相同，只是
 | **Qoder** | `AGENTS.md` | `.qoder/agents/` 3 个 agent + `.qoder/skills/` 12 个 slash 入口（4 深度流程 + 8 py 命令映射） | `--platforms qoder` |
 | **OpenCode** | `AGENTS.md`（与 Qoder 共享） | `.opencode/agents/` 3 个 agent + `.opencode/commands/` 9 个命令 | `--platforms opencode` |
 | **Claude Code** | `CLAUDE.md`（`@AGENTS.md` 桥接） | `.claude/commands/` 9 个 `/trellis-*` 命令 | `--platforms claude` |
-| **Cline** | `.clinerules/trellis-lite.md` | —（无原生 agents/commands 机制） | `--platforms cline` |
+| **Cline** | `.clinerules/trellis-lite.md` | `.cline/skills/` 12 个 slash 入口（4 深度流程 + 8 py 命令映射，与 Qoder 同源） | `--platforms cline` |
 | **全部** | 以上所有 | 以上所有 | `--platforms all`（默认） |
 
-三平台 agent 同名同源（trellis-brainstorm / trellis-implement / trellis-check， 正文单一源在 `templates/`）；Claude Code 与 OpenCode 的 9 个命令同名同正文（context / new / start / check / finish / archive / doctor / cancel / list）；Qoder 12 个 slash 入口由安装时生成——4 个深度流程 skill 从 `.trellis-lite/skills/`，8 个 py 命令映射从 `templates/claude/commands/`（与 Claude 版同源，`/trellis-check` 由深度流程版承担）。重装不覆盖；源更新后删 `.qoder/skills/trellis-*/` 重装可重新生成。
+三平台 agent 同名同源（trellis-brainstorm / trellis-implement / trellis-check， 正文单一源在 `templates/`）；Claude Code 与 OpenCode 的 9 个命令同名同正文（context / new / start / check / finish / archive / doctor / cancel / list）；Qoder 与 Cline 的 12 个 slash 入口由安装时同一生成循环产出（字节级一致）——4 个深度流程 skill 从 `.trellis-lite/skills/`，8 个 py 命令映射从 `templates/claude/commands/`（与 Claude 版同源，`/trellis-check` 由深度流程版承担）。Cline 经 `/skill-name` 或 description 自动匹配触发，无独立 agents 机制（主会话直接实现）。重装不覆盖；源更新后删 `.qoder/skills/trellis-*/` 或 `.cline/skills/trellis-*/` 重装可重新生成。
 
 ### 安装示例
 
@@ -44,7 +44,7 @@ Trellis Lite 支持以下 AI 编码工具，核心工作流完全相同，只是
 | **Qoder** | `Agent` 工具派发 `.qoder/agents/` 的专用 agent | trellis-brainstorm / trellis-implement / trellis-check；另有 `.qoder/skills/` 12 个 slash 入口（4 深度流程 + 8 py 命令映射） |
 | **Claude Code** | `Task` 工具派发通用 agent | `general-purpose` 实现，`code-reviewer` 审查；9 个 `/trellis-*` 命令包装 trellis.py |
 | **OpenCode** | 内置 agent 系统派发 `.opencode/agents/` | 与 Qoder 同名 3 agent；9 个命令在 `.opencode/commands/` |
-| **Cline** | 无原生 sub-agent | 在主会话中直接实现 |
+| **Cline** | 无原生 sub-agent | 主会话直接实现；`.cline/skills/` 12 个 slash 入口与 Qoder 同源生成 |
 
 > 小/中等任务在所有平台都是主会话直接实现，sub-agent 仅影响大任务。
 
@@ -314,7 +314,7 @@ archive + session
 
 ## 自带测试套件
 
-Trellis Lite 仓库自带 202 个 unittest 覆盖全部命令 + 安装脚本 + doctor + pre-commit hook + status machine + usage consistency，作为开发者和 CI 的回归保护。（install/uninstall 测试需 bash 4+，macOS 默认 bash 3.2 会自动 skip。）
+Trellis Lite 仓库自带 204 个 unittest 覆盖全部命令 + 安装脚本 + doctor + pre-commit hook + status machine + usage consistency，作为开发者和 CI 的回归保护。（install/uninstall 测试需 bash 4+，macOS 默认 bash 3.2 会自动 skip。）
 
 ```bash
 # 从仓库根运行（注意：Python 3.9+ 需要 `tests.` 包前缀，相对 import 才能工作）
@@ -333,7 +333,7 @@ python3 -m unittest tests.test_task -v
 | `test_task.py` | 67 | create / start / finish / archive / cancel / list / delete，含路径穿越、CJK slug、连号保护、幂等重启、corrupted `task.json` 拒绝（F44-F53）、`--replace` 自动关闭旧任务及其边界（F49，P3-5a）、`--force` 绕过 corrupted 含指针清理断言（F63，P3-5b）、finish 终态分层报错含 archived 分支（P3-4，P3-H）、cancel 幂等清指针（第 10 轮 P3-A）、archive stray-file 恢复（第 11 轮 P3-3）、archive 月份目录预建保证原子 rename（第 13 轮 P3-1）、tasks/ 缺失友好报错（第 19 轮 P3-1） |
 | `test_session.py` | 14 | journal 追加、commit SHA 校验（合法/非法/多长度）、未初始化、日志轮转、非编号文件过滤、workspace 缺失自建（第 11 轮 P3-4，与 workspace-is-a-file 为同一模式 F44 后续） |
 | `test_context_specs_help.py` | 14 | repo-root 守卫(4) / context(4，含 corrupted 活跃任务 warning) / specs(2) / help(2，含描述列对齐护栏 P3-E) |
-| `test_install.py` | 26 | 默认 / claude / qoder+cline / 运行时路径清理 / uninstall 全部路径（含 O9/O11/O14/O16/O17）/ 三平台 agents+commands+skills 部署与卸载（qoder SKILL.md 正文包含断言）/ 模板不变量（claude↔opencode 命令同源、frontmatter 合法 YAML）/ 卸载保留用户自建平台文件 |
+| `test_install.py` | 28 | 默认 / claude / cline / qoder+cline 字节一致 / 运行时路径清理 / uninstall 全部路径（含 O9/O11/O14/O16/O17）/ 四平台 agents+commands+skills 部署与卸载（qoder/cline SKILL.md 正文包含与双平台字节一致断言）/ 模板不变量（claude↔opencode 命令同源、frontmatter 合法 YAML）/ 卸载保留用户自建平台文件 |
 | `test_doctor.py` | 26 | 10 项健康检查、`--fix` 自愈、stray-file 恢复（F46）、archive 递归完整性（F54）、corrupted 活跃任务（F55）、developer 恢复（含 no-name 分支 P2-1）、orphan workspace 警告正/负向（P3-5c/P3-B）、终态指针 warning（P3-A） |
 | `test_precommit.py` | 6 | hook 安装/卸载、`set -e` 兼容性、trellis marker 锚定 |
 | `test_slugify_fuzz.py` | 6 | CJK / 表情 / 长串 / 边界字符的 slug 化与防 glob 注入 |
@@ -354,4 +354,4 @@ CI：`.github/workflows/test.yml` 在 Python 3.9–3.13 矩阵上自动跑（推
 | `.trellis-lite/spec/` | 编码规范（AI 写代码前必读） |
 | `.trellis-lite/workspace/<dev>/journal-*.md` | 跨会话记忆 |
 | `lite/docs/design.md` | 设计原理与架构文档 |
-| `lite/tests/` | 202 个 unittest（回归保护） |
+| `lite/tests/` | 204 个 unittest（回归保护） |
